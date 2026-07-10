@@ -32,8 +32,14 @@ export class PrismaLedgerRepository implements LedgerRepository {
 
   /** Derived totals (credits) straight from the append-only rows. */
   async totals(): Promise<EscrowTotals> {
-    const grouped: Array<{ account: string; direction: string; _sum: { amount: number | null } }> =
-      await this.db.ledgerEntry.groupBy({ by: ['account', 'direction'], _sum: { amount: true } });
+    // NOTE: Prisma's groupBy typings require an explicit `orderBy` for overload resolution;
+    // omitting it triggers a spurious "missing array properties" compile error. The cast keeps
+    // the result shape stable for our aggregation below.
+    const grouped = (await this.db.ledgerEntry.groupBy({
+      by: ['account', 'direction'],
+      _sum: { amount: true },
+      orderBy: [{ account: 'asc' }, { direction: 'asc' }],
+    })) as unknown as Array<{ account: string; direction: string; _sum: { amount: number | null } }>;
     const net = (account: string): number => {
       const credit = grouped.find((g) => g.account === account && g.direction === 'CREDIT')?._sum.amount ?? 0;
       const debit = grouped.find((g) => g.account === account && g.direction === 'DEBIT')?._sum.amount ?? 0;
