@@ -1,0 +1,212 @@
+// Rydafirst persistence schema. The append-only ledger + job_events are the source of truth.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role { CUSTOMER RIDER ADMIN }
+enum JobType { DELIVERY RIDE }
+enum KycStatus { UNSUBMITTED PENDING APPROVED REJECTED }
+enum DisputeStatus { OPEN AWAITING_EVIDENCE UNDER_REVIEW RESOLVED }
+enum LedgerAccount { EXTERNAL ESCROW RIDER_PAYABLE CUSTOMER_REFUND PLATFORM_FEE }
+enum Direction { DEBIT CREDIT }
+enum CodeKind { DELIVERY START_PIN PROXY }
+
+enum JobStatus {
+  CREATED FUNDED SEARCHING ACCEPTED EN_ROUTE_PICKUP AT_PICKUP
+  IN_PROGRESS EN_ROUTE_DROP ARRIVED AWAITING_CODE COMPLETED
+  RELEASED CANCELLED FAILED_ATTEMPT DISPUTED DISPUTE_RESOLVED
+}
+
+model User {
+  id        String   @id @default(uuid())
+  role      Role
+  phone     String   @unique
+  email     String?  @unique
+  name      String?
+  createdAt DateTime @default(now())
+
+  rider           Rider?
+  paymentAccounts PaymentAccount[]
+  refreshTokens   RefreshToken[]
+}
+
+model Rider {
+  userId       String    @id
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kycStatus    KycStatus @default(UNSUBMITTED)
+  ninVerified  Boolean   @default(false)
+  bvnVerified  Boolean   @default(false)
+  idDocUploaded Boolean  @default(false)
+  selfieMatched Boolean  @default(false)
+  addressProvided Boolean @default(false)
+  address      String?
+  vehicleType  String?
+  vehiclePlate String?
+  rating       Float     @default(0)
+  banned       Boolean   @default(false)
+}
+
+model PaymentAccount {
+  id            String  @id @default(uuid())
+  userId        String
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bankCode      String
+  accountNumber String  // encrypted at rest (AES-256-GCM)
+  accountName   String
+  verified      Boolean @default(false)
+  type          String  // refund | payout
+}
+
+model Otp {
+  phone     String   @id
+  codeHash  String
+  createdAt DateTime @default(now())
+  attempts  Int      @default(0)
+  consumed  Boolean  @default(false)
+}
+
+model RefreshToken {
+  tokenHash String   @id
+  familyId  String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rotated   Boolean  @default(false)
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  @@index([familyId])
+}
+
+model IdentityBlocklist {
+  id         String   @id @default(uuid())
+  ninHash    String?  @unique
+  bvnHash    String?  @unique
+  deviceHash String?
+  reason     String
+  createdAt  DateTime @default(now())
+}
+
+model Job {
+  id              String    @id @default(uuid())
+  type            JobType
+  status          JobStatus @default(CREATED)
+  customerId      String
+  riderId         String?
+  amountMinor     Int
+  currency        String    @default("NGN")
+  refundAccountId String
+  pickupLat       Float
+  pickupLng       Float
+  dropoffLat      Float
+  dropoffLng      Float
+  recipientName   String?
+  recipientPhone  String?
+  fallbackPolicy  String?
+  flwTxRef        String?   @unique
+  flwTxId         String?
+  createdAt       DateTime  @default(now())
+
+  events          JobEvent[]
+  codes           ConfirmationCode[]
+  disputes        Dispute[]
+  ledgerEntries   LedgerEntry[]
+  escrowTxns      EscrowTransaction[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([riderId])
+}
+
+// Append-only job timeline (evidence + audit).
+model JobEvent {
+  id        String   @id @default(uuid())
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  type      String
+  actor     String?
+  payload   Json?
+  geoLat    Float?
+  geoLng    Float?
+  createdAt DateTime @default(now())
+  @@index([jobId])
+}
+
+// Append-only double-entry ledger. Balances are DERIVED from these rows; never mutated.
+model LedgerEntry {
+  id        String        @id @default(uuid())
+  jobId     String
+  job       Job           @relation(fields: [jobId], references: [id])
+  account   LedgerAccount
+  direction Direction
+  amount    Int           // minor units (kobo)
+  createdAt DateTime      @default(now())
+  @@index([jobId])
+  @@index([account])
+}
+
+model EscrowTransaction {
+  id             String   @id @default(uuid())
+  jobId          String
+  job            Job      @relation(fields: [jobId], references: [id])
+  providerRef    String
+  amount         Int
+  currency       String   @default("NGN")
+  status         String   // held | released | refunded | partial
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+  @@index([jobId])
+}
+
+// Idempotency + exactly-once infrastructure.
+model IdempotencyRecord {
+  key       String   @id
+  result    Json
+  createdAt DateTime @default(now())
+}
+
+model WebhookInbox {
+  eventId   String   @id
+  createdAt DateTime @default(now())
+}
+
+model ConfirmationCode {
+  id        String   @id @default(uuid())
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  kind      CodeKind
+  codeHash  String
+  attempts  Int      @default(0)
+  consumed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  @@unique([jobId, kind])
+}
+
+model Dispute {
+  id         String        @id @default(uuid())
+  jobId      String
+  job        Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  openedBy   String
+  status     DisputeStatus @default(OPEN)
+  tier       String        // auto | manual
+  resolution String?       // RELEASE | REFUND | SPLIT
+  createdAt  DateTime      @default(now())
+  resolvedAt DateTime?
+  @@index([jobId])
+}
+
+// Immutable audit of every money / dispute / enforcement action.
+model AuditLog {
+  id        String   @id @default(uuid())
+  actor     String
+  action    String
+  entity    String
+  before    Json?
+  after     Json?
+  ip        String?
+  createdAt DateTime @default(now())
+  @@index([entity])
+}

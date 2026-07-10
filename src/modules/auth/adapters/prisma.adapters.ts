@@ -1,0 +1,60 @@
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../../../database/prisma.service.js';
+import type { OtpRecord } from '../domain/otp.js';
+import type { RefreshTokenState } from '../domain/refresh-rotation.js';
+import type { Role } from '../../../common/auth/roles.js';
+import type { OtpRepository, RefreshTokenRepository, UserRepository } from '../ports.js';
+
+@Injectable()
+export class PrismaOtpRepo implements OtpRepository {
+  constructor(private readonly db: PrismaService) {}
+  async save(phone: string, r: OtpRecord): Promise<void> {
+    await this.db.otp.upsert({
+      where: { phone },
+      update: { codeHash: r.codeHash, attempts: r.attempts, consumed: r.consumed, createdAt: new Date(r.createdAtMs) },
+      create: { phone, codeHash: r.codeHash, attempts: r.attempts, consumed: r.consumed, createdAt: new Date(r.createdAtMs) },
+    });
+  }
+  async find(phone: string): Promise<OtpRecord | null> {
+    const o = await this.db.otp.findUnique({ where: { phone } });
+    return o ? { codeHash: o.codeHash, createdAtMs: o.createdAt.getTime(), attempts: o.attempts, consumed: o.consumed } : null;
+  }
+  async incrementAttempts(phone: string): Promise<void> {
+    await this.db.otp.update({ where: { phone }, data: { attempts: { increment: 1 } } });
+  }
+  async markConsumed(phone: string): Promise<void> {
+    await this.db.otp.update({ where: { phone }, data: { consumed: true } });
+  }
+}
+
+@Injectable()
+export class PrismaRefreshRepo implements RefreshTokenRepository {
+  constructor(private readonly db: PrismaService) {}
+  async findByHash(tokenHash: string): Promise<RefreshTokenState | null> {
+    const r = await this.db.refreshToken.findUnique({ where: { tokenHash } });
+    return r ? { familyId: r.familyId, tokenHash: r.tokenHash, rotated: r.rotated, revoked: r.revoked } : null;
+  }
+  async createFamily(userId: string, tokenHash: string): Promise<void> {
+    await this.db.refreshToken.create({ data: { tokenHash, familyId: crypto.randomUUID(), userId } });
+  }
+  async rotate(oldHash: string, newHash: string): Promise<void> {
+    const old = await this.db.refreshToken.findUnique({ where: { tokenHash: oldHash } });
+    if (!old) return;
+    await this.db.$transaction([
+      this.db.refreshToken.update({ where: { tokenHash: oldHash }, data: { rotated: true } }),
+      this.db.refreshToken.create({ data: { tokenHash: newHash, familyId: old.familyId, userId: old.userId } }),
+    ]);
+  }
+  async revokeFamily(familyId: string): Promise<void> {
+    await this.db.refreshToken.updateMany({ where: { familyId }, data: { revoked: true } });
+  }
+}
+
+@Injectable()
+export class PrismaUserRepo implements UserRepository {
+  constructor(private readonly db: PrismaService) {}
+  async upsertByPhone(phone: string, role: Role): Promise<{ id: string; role: Role }> {
+    const u = await this.db.user.upsert({ where: { phone }, update: {}, create: { phone, role } });
+    return { id: u.id, role: u.role as Role };
+  }
+}
