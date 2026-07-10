@@ -33,7 +33,8 @@ async function bootstrap(): Promise<void> {
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableShutdownHooks();
 
-  await app.listen(env.PORT);
+  // Bind to 0.0.0.0 so the container is reachable on hosts like Railway (not just localhost).
+  await app.listen(env.PORT, '0.0.0.0');
   new Logger('Bootstrap').log(`Rydafirst API listening on :${env.PORT} (${env.NODE_ENV})`);
 }
 

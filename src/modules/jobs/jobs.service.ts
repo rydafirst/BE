@@ -24,6 +24,9 @@ const FAILED_ATTEMPT_FEE_MINOR = 50_000;
 
 export type CreatedJob = Job & { paymentLink: string };
 
+/** PII-free projection shown to riders in the discovery feed (no recipient/customer/refund data). */
+export type AvailableJob = Pick<Job, 'id' | 'type' | 'amountMinor' | 'currency' | 'pickup' | 'dropoff' | 'createdAt'>;
+
 @Injectable()
 export class JobsService {
   constructor(
@@ -194,6 +197,31 @@ export class JobsService {
 
   async listActiveJobs(): Promise<Job[]> { return this.jobs.listActive(); }
   async jobsForRider(riderId: string): Promise<Job[]> { return this.jobs.listByRider(riderId); }
+
+  /**
+   * Jobs an online rider can currently accept: funded and still searching for a rider.
+   * (First-accept-wins is enforced atomically in accept(); this is only the discovery feed.)
+   * Newest first. In production this is filtered by the rider's geo proximity via the matching module.
+   *
+   * SECURITY: returns a trimmed, PII-free projection — a rider sees only what they need to
+   * decide (type, fare, pickup/dropoff coords). Recipient name/phone, customerId and the
+   * refund account are NOT exposed until the rider actually claims the job.
+   */
+  async availableJobs(): Promise<AvailableJob[]> {
+    const active = await this.jobs.listActive();
+    return active
+      .filter((j) => j.status === 'SEARCHING')
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((j) => ({
+        id: j.id,
+        type: j.type,
+        amountMinor: j.amountMinor,
+        currency: j.currency,
+        pickup: j.pickup,
+        dropoff: j.dropoff,
+        createdAt: j.createdAt,
+      }));
+  }
   async status(jobId: string): Promise<JobStatus> { return (await this.mustFind(jobId)).status; }
 
   private async assertAssigned(jobId: string, riderId: string): Promise<Job> {

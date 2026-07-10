@@ -1,8 +1,10 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, VERSION_NEUTRAL } from '@nestjs/common';
 import { Public } from '../common/auth/public.decorator.js';
 
+// Version-neutral so health checks live at /health/live (not /v1/health/live) — this is the
+// path Railway/uptime probes hit.
 @Public()
-@Controller('health')
+@Controller({ path: 'health', version: VERSION_NEUTRAL })
 export class HealthController {
   @Get('live')
   live(): { status: 'ok' } {

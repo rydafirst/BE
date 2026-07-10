@@ -21,6 +21,13 @@ export class JobsController {
     return this.jobs.createJob(user.id, dto);
   }
 
+  // ---- Rider: discovery feed (declared before :id so "available" isn't read as an id) ----
+  @Get('available')
+  @RequirePermission('job:accept')
+  available() {
+    return this.jobs.availableJobs();
+  }
+
   @Get(':id')
   @RequirePermission('job:read:own')
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
