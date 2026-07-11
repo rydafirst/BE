@@ -86,7 +86,10 @@ export class JobsService {
 
   /** Verify-on-return: verify the Flutterwave transaction and fund the job (webhook-independent). */
   async confirmPayment(actorId: string, jobId: string, transactionId: string): Promise<{ funded: boolean; status: string }> {
-    const job = await this.getJob(actorId, jobId); // owner check
+    const job = await this.getJob(actorId, jobId); // owner check (also lazily expires stale unpaid jobs)
+    // Only an open, unpaid order can be funded. If the window closed (CANCELLED) or it's already
+    // funded, do NOT capture money — this prevents a late payment landing on a cancelled order.
+    if (job.status !== 'CREATED') return { funded: false, status: job.status };
     const verified = await this.escrow.verifyTransaction(transactionId);
     if (verified.status !== 'successful') return { funded: false, status: verified.status };
     await this.escrow.confirmFunding(job.id, verified);
@@ -167,7 +170,25 @@ export class JobsService {
   async getJob(actorId: string, jobId: string): Promise<Job> {
     const job = await this.mustFind(jobId);
     if (job.customerId !== actorId && job.riderId !== actorId) throw new ForbiddenException();
-    return job;
+    return this.expireIfStale(job);
+  }
+
+  /** A customer's order history, newest first (unpaid orders past the window are auto-cancelled). */
+  async myJobs(customerId: string): Promise<Job[]> {
+    const jobs = await this.jobs.listByCustomer(customerId);
+    const out: Job[] = [];
+    for (const j of jobs) out.push(await this.expireIfStale(j));
+    return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** Auto-cancel an unpaid order once the payment window elapses. No funds captured => safe. */
+  private async expireIfStale(job: Job): Promise<Job> {
+    if (job.status !== 'CREATED') return job;
+    const ageMs = Date.now() - Date.parse(job.createdAt);
+    if (ageMs <= this.env.PAYMENT_WINDOW_MINUTES * 60_000) return job;
+    assertTransition('CREATED', 'CANCELLED');
+    await this.jobs.updateStatus(job.id, 'CANCELLED');
+    return { ...job, status: 'CANCELLED' };
   }
 
   async cancel(actorId: string, jobId: string): Promise<{ status: JobStatus; refunded: boolean }> {

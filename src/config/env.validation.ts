@@ -36,6 +36,9 @@ export const envSchema = z.object({
   JOBS_QUOTE_SECRET: z.string().min(16),
   DB_DRIVER: z.enum(['memory', 'postgres']).default('memory'),
 
+  // How long an unpaid order stays open before it auto-cancels (no funds captured, so it's safe).
+  PAYMENT_WINDOW_MINUTES: z.coerce.number().int().positive().default(20),
+
   // --- OTP delivery ---------------------------------------------------------
   // How the login OTP reaches the user. `console` (dev) logs it; `email` sends via Resend;
   // `sms` sends via Termii (blocked pending business registration).

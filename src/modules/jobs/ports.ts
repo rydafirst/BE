@@ -29,6 +29,7 @@ export interface JobRepository {
   claim(id: string, riderId: string): Promise<boolean>;
   listActive(): Promise<Job[]>;
   listByRider(riderId: string): Promise<Job[]>;
+  listByCustomer(customerId: string): Promise<Job[]>;
   findByTxRef(txRef: string): Promise<Job | null>;
   setPaymentRefs(id: string, refs: { txRef?: string; txId?: string }): Promise<void>;
   setArrivedAt(id: string, atMs: number): Promise<void>;

@@ -17,6 +17,9 @@ export class InMemoryJobRepo implements JobRepository {
   async listByRider(riderId: string): Promise<Job[]> {
     return [...this.m.values()].filter((j) => j.riderId === riderId);
   }
+  async listByCustomer(customerId: string): Promise<Job[]> {
+    return [...this.m.values()].filter((j) => j.customerId === customerId);
+  }
   async findByTxRef(txRef: string): Promise<Job | null> {
     return [...this.m.values()].find((j) => j.flwTxRef === txRef) ?? null;
   }

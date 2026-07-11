@@ -71,6 +71,12 @@ export class PrismaJobRepository implements JobRepository {
     for (const r of rows) { const j = await this.find(r.id); if (j) out.push(j); }
     return out;
   }
+  async listByCustomer(customerId: string): Promise<Job[]> {
+    const rows = await this.db.job.findMany({ where: { customerId } });
+    const out: Job[] = [];
+    for (const r of rows) { const j = await this.find(r.id); if (j) out.push(j); }
+    return out;
+  }
 
   async listActive(): Promise<Job[]> {
     const rows = await this.db.job.findMany({

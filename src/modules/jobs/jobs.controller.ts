@@ -21,6 +21,13 @@ export class JobsController {
     return this.jobs.createJob(user.id, dto);
   }
 
+  // ---- Customer: order history (declared before :id so "mine" isn't read as an id) ----
+  @Get('mine')
+  @RequirePermission('job:read:own')
+  mine(@CurrentUser() user: AuthUser) {
+    return this.jobs.myJobs(user.id);
+  }
+
   // ---- Rider: discovery feed (declared before :id so "available" isn't read as an id) ----
   @Get('available')
   @RequirePermission('job:accept')
