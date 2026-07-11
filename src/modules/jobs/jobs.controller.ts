@@ -35,6 +35,13 @@ export class JobsController {
     return this.jobs.availableJobs();
   }
 
+  // ---- Rider: jobs assigned to me (so an active trip is resumable from any device) ----
+  @Get('assigned')
+  @RequirePermission('job:accept')
+  assigned(@CurrentUser() user: AuthUser) {
+    return this.jobs.jobsForRider(user.id);
+  }
+
   @Get(':id')
   @RequirePermission('job:read:own')
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
