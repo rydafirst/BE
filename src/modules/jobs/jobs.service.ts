@@ -11,9 +11,10 @@ import { assertTransition, type JobStatus } from './domain/job-state-machine.js'
 import { computeFare, type FareBreakdown } from './domain/fare.js';
 import { haversineMeters, type GeoPoint } from './domain/geo.js';
 import { isWithinGeofence } from '../confirmations/domain/geofence.js';
-import { waitingFee } from '../confirmations/domain/fallback.js';
 import { signQuote, verifyQuote } from './domain/quote-token.js';
 import { cancellationPolicy } from './domain/cancellation.js';
+import { failedAttemptFee } from './domain/failed-attempt-fee.js';
+import { isPaymentExpired } from './domain/payment-window.js';
 import { resolutionToSettlement, type Resolution } from '../disputes/domain/dispute.js';
 import { JOB_REPO, type Job, type JobRepository } from './ports.js';
 import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
@@ -21,7 +22,6 @@ import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
 
 const QUOTE_TTL_MS = 120_000;
 const PROGRESS_STEPS: readonly JobStatus[] = ['EN_ROUTE_PICKUP', 'AT_PICKUP', 'IN_PROGRESS', 'EN_ROUTE_DROP'];
-const FAILED_ATTEMPT_FEE_MINOR = 50_000;
 
 export type CreatedJob = Job & { paymentLink: string };
 
@@ -147,16 +147,16 @@ export class JobsService {
     assertTransition(job.status, 'FAILED_ATTEMPT');
     await this.jobs.updateStatus(jobId, 'FAILED_ATTEMPT');
 
-    // Base attempt fee compensates the wasted trip. For the WAIT policy, add the metered waiting
-    // fee accrued since the rider was verified at the drop-off (10-min grace, then ₦50/min capped).
-    // waitingFee() is a pure, tested function; elapsed time is server-authoritative (arrivedAt).
-    let waitMinor = 0;
-    if (job.fallbackPolicy === 'WAIT' && job.arrivedAt) {
-      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - job.arrivedAt) / 1000));
-      waitMinor = waitingFee(elapsedSeconds).amount;
-    }
-    // Total owed to the rider, never more than what was collected (invariant enforced downstream too).
-    const fee = Money.of(Math.min(FAILED_ATTEMPT_FEE_MINOR + waitMinor, job.amountMinor));
+    // Fee math is a pure, tested domain function: base attempt fee + metered waiting fee for the
+    // WAIT policy (10-min grace, then ₦50/min, capped), and never more than the amount collected.
+    // Elapsed time is server-authoritative (arrivedAt is set on GPS-verified arrival).
+    const feeCalc = failedAttemptFee({
+      collectedMinor: job.amountMinor,
+      policy: job.fallbackPolicy,
+      arrivedAtMs: job.arrivedAt,
+      nowMs: Date.now(),
+    });
+    const fee = Money.of(feeCalc.totalMinor);
 
     const riderPayout = await this.payout.getPayout(riderId);
     await this.escrow.settle({
@@ -164,7 +164,7 @@ export class JobsService {
       ...(riderPayout ? { riderPayout } : {}),
       ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),
     });
-    return { status: 'FAILED_ATTEMPT', attemptFeeMinor: fee.amount, waitingFeeMinor: waitMinor };
+    return { status: 'FAILED_ATTEMPT', attemptFeeMinor: fee.amount, waitingFeeMinor: feeCalc.waitingMinor };
   }
 
   async getJob(actorId: string, jobId: string): Promise<Job> {
@@ -181,11 +181,12 @@ export class JobsService {
     return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  /** Auto-cancel an unpaid order once the payment window elapses. No funds captured => safe. */
+  /** Auto-cancel an unpaid order once the payment window elapses. No funds captured => safe.
+   *  The "is it expired?" decision is the pure `isPaymentExpired` domain rule; here we only
+   *  perform the guarded state transition. */
   private async expireIfStale(job: Job): Promise<Job> {
-    if (job.status !== 'CREATED') return job;
-    const ageMs = Date.now() - Date.parse(job.createdAt);
-    if (ageMs <= this.env.PAYMENT_WINDOW_MINUTES * 60_000) return job;
+    const windowMs = this.env.PAYMENT_WINDOW_MINUTES * 60_000;
+    if (!isPaymentExpired(job.status, Date.parse(job.createdAt), Date.now(), windowMs)) return job;
     assertTransition('CREATED', 'CANCELLED');
     await this.jobs.updateStatus(job.id, 'CANCELLED');
     return { ...job, status: 'CANCELLED' };
