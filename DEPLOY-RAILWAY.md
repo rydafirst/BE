@@ -73,6 +73,23 @@ Then in the Flutterwave dashboard set the webhook URL to:
 
 ---
 
+## Path D — real OTP (SMS via Termii) + email (Resend)
+
+By default OTPs log to the server console (`OTP_CHANNEL=console`) and email uses a console
+fallback — no keys needed. To send for real:
+
+| Variable | Value |
+|---|---|
+| `OTP_CHANNEL` | `sms` (send login codes over SMS; requires Termii key below) |
+| `TERMII_API_KEY` | your Termii API key |
+| `TERMII_SENDER_ID` | approved sender ID (default `Rydafirst`) |
+| `RESEND_API_KEY` | your Resend API key (if set, real email is sent) |
+| `EMAIL_FROM` | e.g. `Rydafirst <noreply@yourdomain>` (must be a Resend-verified domain) |
+
+Fail-closed: `OTP_CHANNEL=sms` with no `TERMII_API_KEY` refuses to boot.
+
+---
+
 ## After deploy — verify
 
 - `GET https://<service>/health/live` → `{"status":"ok"}`

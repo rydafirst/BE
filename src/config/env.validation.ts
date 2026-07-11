@@ -35,6 +35,18 @@ export const envSchema = z.object({
   HASH_PEPPER: z.string().min(16),
   JOBS_QUOTE_SECRET: z.string().min(16),
   DB_DRIVER: z.enum(['memory', 'postgres']).default('memory'),
+
+  // --- OTP delivery ---------------------------------------------------------
+  // How the login OTP reaches the user. `console` (dev) logs it; `sms` sends via Termii.
+  OTP_CHANNEL: z.enum(['console', 'sms']).default('console'),
+  TERMII_API_KEY: z.string().default(''),
+  TERMII_SENDER_ID: z.string().default('Rydafirst'),
+  TERMII_BASE_URL: z.string().url().default('https://api.ng.termii.com'),
+
+  // --- Transactional email (Resend) ----------------------------------------
+  // If RESEND_API_KEY is set, real emails are sent; otherwise emails log to the console.
+  RESEND_API_KEY: z.string().default(''),
+  EMAIL_FROM: z.string().default('Rydafirst <onboarding@resend.dev>'),
 }).superRefine((env, ctx) => {
   // Fail-closed: if you turn on Postgres, the infra URLs must be present and valid.
   if (env.DB_DRIVER === 'postgres') {
@@ -45,6 +57,10 @@ export const envSchema = z.object({
   if (env.PAYMENT_DRIVER === 'flutterwave') {
     if (!env.FLW_SECRET_KEY) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLW_SECRET_KEY'], message: 'required when PAYMENT_DRIVER=flutterwave' });
     if (!env.FLW_WEBHOOK_SECRET) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLW_WEBHOOK_SECRET'], message: 'required when PAYMENT_DRIVER=flutterwave' });
+  }
+  // Fail-closed: if OTPs go out over SMS, the Termii key must be present.
+  if (env.OTP_CHANNEL === 'sms' && !env.TERMII_API_KEY) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TERMII_API_KEY'], message: 'required when OTP_CHANNEL=sms' });
   }
 });
 

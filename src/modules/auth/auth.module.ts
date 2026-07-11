@@ -9,6 +9,9 @@ import {
 } from './adapters/in-memory.adapters.js';
 import { PrismaOtpRepo, PrismaRefreshRepo, PrismaUserRepo } from './adapters/prisma.adapters.js';
 import { RedisRateLimiter } from './adapters/redis-rate-limiter.js';
+import { TermiiOtpSender } from './adapters/termii-otp-sender.js';
+import { ENV } from '../../config/config.module.js';
+import type { Env } from '../../config/env.validation.js';
 
 const usePg = process.env.DB_DRIVER === 'postgres';
 
@@ -23,7 +26,12 @@ const usePg = process.env.DB_DRIVER === 'postgres';
     { provide: USER_REPO, useClass: usePg ? PrismaUserRepo : InMemoryUserRepo },
     { provide: RATE_LIMITER, useClass: usePg ? RedisRateLimiter : InMemoryRateLimiter },
     { provide: TOKEN_SIGNER, useClass: DevTokenSigner },
-    { provide: OTP_SENDER, useClass: DevOtpSender },
+    {
+      // OTP delivery: real SMS via Termii when OTP_CHANNEL=sms, else the dev console sender.
+      provide: OTP_SENDER,
+      useFactory: (env: Env) => (env.OTP_CHANNEL === 'sms' ? new TermiiOtpSender(env) : new DevOtpSender()),
+      inject: [ENV],
+    },
   ],
 })
 export class AuthModule {}
