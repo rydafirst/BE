@@ -52,6 +52,20 @@ export class JobsService {
     const v = verifyQuote(dto.quoteToken, this.env.JOBS_QUOTE_SECRET, Date.now());
     if (!v.ok) throw new BadRequestException(`Invalid quote (${v.reason})`);
 
+    // One unpaid order at a time: block a new order while the customer still has one awaiting
+    // payment (stale ones are auto-expired first, so they don't wrongly block). Prevents
+    // contradictory duplicate pending orders.
+    const existing = await this.jobs.listByCustomer(customerId);
+    for (const j of existing) {
+      const fresh = await this.expireIfStale(j);
+      if (fresh.status === 'CREATED') {
+        throw new ConflictException({
+          message: 'You have an order awaiting payment. Please complete or cancel it first.',
+          pendingJobId: fresh.id,
+        });
+      }
+    }
+
     const job: Job = {
       id: randomUUID(), type: v.payload.type, status: 'CREATED', customerId,
       amountMinor: v.payload.amountMinor, currency: 'NGN', refundAccountId: dto.refundAccountId,
