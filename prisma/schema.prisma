@@ -152,6 +152,8 @@ model Job {
   pickupLng       Float
   dropoffLat      Float
   dropoffLng      Float
+  pickupAddress   String?
+  dropoffAddress  String?
   recipientName   String?
   recipientPhone  String?
   item            String?
