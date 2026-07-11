@@ -71,6 +71,8 @@ export class JobsService {
       amountMinor: v.payload.amountMinor, currency: 'NGN', refundAccountId: dto.refundAccountId,
       pickup: v.payload.pickup, dropoff: v.payload.dropoff,
       ...(dto.recipient ? { recipient: dto.recipient } : {}),
+      ...(dto.item ? { item: dto.item } : {}),
+      ...(dto.instructions ? { instructions: dto.instructions } : {}),
       ...(dto.fallbackPolicy ? { fallbackPolicy: dto.fallbackPolicy } : {}),
       createdAt: new Date().toISOString(),
     };

@@ -14,6 +14,8 @@ export interface Job {
   pickup: GeoPoint;
   dropoff: GeoPoint;
   recipient?: { name: string; phone: string };
+  item?: string;
+  instructions?: string;
   fallbackPolicy?: 'WAIT' | 'DELEGATE' | 'RETURN';
   flwTxRef?: string;
   flwTxId?: string;

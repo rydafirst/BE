@@ -154,6 +154,8 @@ model Job {
   dropoffLng      Float
   recipientName   String?
   recipientPhone  String?
+  item            String?
+  instructions    String?
   fallbackPolicy  String?
   flwTxRef        String?   @unique
   flwTxId         String?

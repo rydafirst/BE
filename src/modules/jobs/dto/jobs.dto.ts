@@ -24,6 +24,8 @@ export class CreateJobDto {
   @IsString() @Length(1, 64) refundAccountId!: string;
   @IsOptional() @ValidateNested() @Type(() => RecipientDto) recipient?: RecipientDto;
   @IsOptional() @IsIn(['WAIT', 'DELEGATE', 'RETURN']) fallbackPolicy?: 'WAIT' | 'DELEGATE' | 'RETURN';
+  @IsOptional() @IsString() @Length(1, 200) item?: string;         // what is being sent
+  @IsOptional() @IsString() @Length(1, 500) instructions?: string; // notes for the rider
 }
 
 export class AdvanceDto {
