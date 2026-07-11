@@ -13,8 +13,10 @@ export interface Job {
   refundAccountId: string;
   pickup: GeoPoint;
   dropoff: GeoPoint;
-  pickupAddress?: string;
+  pickupAddress?: string;   // full label (revealed to rider after accept)
   dropoffAddress?: string;
+  pickupArea?: string;      // coarse neighbourhood (e.g. "Ikeja") shown in the pre-accept feed
+  dropoffArea?: string;
   recipient?: { name: string; phone: string };
   item?: string;
   instructions?: string;

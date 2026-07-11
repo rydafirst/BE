@@ -76,6 +76,8 @@ export class JobsService {
       pickup: v.payload.pickup, dropoff: v.payload.dropoff,
       ...(dto.pickupAddress ? { pickupAddress: dto.pickupAddress } : {}),
       ...(dto.dropoffAddress ? { dropoffAddress: dto.dropoffAddress } : {}),
+      ...(dto.pickupArea ? { pickupArea: dto.pickupArea } : {}),
+      ...(dto.dropoffArea ? { dropoffArea: dto.dropoffArea } : {}),
       ...(dto.recipient ? { recipient: dto.recipient } : {}),
       ...(dto.item ? { item: dto.item } : {}),
       ...(dto.instructions ? { instructions: dto.instructions } : {}),
@@ -275,8 +277,9 @@ export class JobsService {
         amountMinor: j.amountMinor,
         currency: j.currency,
         createdAt: j.createdAt,
-        pickupArea: coarseArea(j.pickupAddress),
-        dropoffArea: coarseArea(j.dropoffAddress),
+        // Prefer the neighbourhood captured at booking; fall back to parsing the full address.
+        pickupArea: j.pickupArea || coarseArea(j.pickupAddress),
+        dropoffArea: j.dropoffArea || coarseArea(j.dropoffAddress),
       }));
   }
   async status(jobId: string): Promise<JobStatus> { return (await this.mustFind(jobId)).status; }
