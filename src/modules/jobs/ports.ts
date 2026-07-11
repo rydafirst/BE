@@ -13,6 +13,8 @@ export interface Job {
   refundAccountId: string;
   pickup: GeoPoint;
   dropoff: GeoPoint;
+  pickupAddress?: string;
+  dropoffAddress?: string;
   recipient?: { name: string; phone: string };
   item?: string;
   instructions?: string;

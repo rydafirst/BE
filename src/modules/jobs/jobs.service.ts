@@ -68,7 +68,8 @@ export class JobsService {
 
     const job: Job = {
       id: randomUUID(), type: v.payload.type, status: 'CREATED', customerId,
-      amountMinor: v.payload.amountMinor, currency: 'NGN', refundAccountId: dto.refundAccountId,
+      // Refunds default to the original payment source; 'source' is the sentinel for that.
+      amountMinor: v.payload.amountMinor, currency: 'NGN', refundAccountId: dto.refundAccountId ?? 'source',
       pickup: v.payload.pickup, dropoff: v.payload.dropoff,
       ...(dto.recipient ? { recipient: dto.recipient } : {}),
       ...(dto.item ? { item: dto.item } : {}),
