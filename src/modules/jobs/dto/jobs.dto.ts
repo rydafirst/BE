@@ -27,6 +27,8 @@ export class CreateJobDto {
   @IsOptional() @IsIn(['WAIT', 'DELEGATE', 'RETURN']) fallbackPolicy?: 'WAIT' | 'DELEGATE' | 'RETURN';
   @IsOptional() @IsString() @Length(1, 200) item?: string;         // what is being sent
   @IsOptional() @IsString() @Length(1, 500) instructions?: string; // notes for the rider
+  @IsOptional() @IsString() @Length(1, 300) pickupAddress?: string;  // human-readable label
+  @IsOptional() @IsString() @Length(1, 300) dropoffAddress?: string; // human-readable label
 }
 
 export class AdvanceDto {
