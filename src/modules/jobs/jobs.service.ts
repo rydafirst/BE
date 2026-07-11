@@ -135,16 +135,31 @@ export class JobsService {
 
   async advance(riderId: string, jobId: string, to: JobStatus): Promise<Job> {
     if (!PROGRESS_STEPS.includes(to)) throw new BadRequestException('Not a progress step');
+    // Reaching the pickup ("AT_PICKUP") is GPS-gated — use arriveAtPickup instead.
+    if (to === 'AT_PICKUP') throw new BadRequestException('Confirm arrival at pickup with GPS');
     const job = await this.assertAssigned(jobId, riderId);
     assertTransition(job.status, to);
     await this.jobs.updateStatus(jobId, to);
     return this.mustFind(jobId);
   }
 
+  /** GPS-verified arrival at the PICKUP (mirrors drop-off arrival). */
+  async arriveAtPickup(riderId: string, jobId: string, riderPos: GeoPoint): Promise<Job> {
+    const job = await this.assertAssigned(jobId, riderId);
+    assertTransition(job.status, 'AT_PICKUP');
+    if (!isWithinGeofence(riderPos, job.pickup, this.env.ARRIVAL_RADIUS_M)) {
+      throw new BadRequestException('Not within the pickup location');
+    }
+    await this.jobs.updateStatus(jobId, 'AT_PICKUP');
+    return this.mustFind(jobId);
+  }
+
   async markArrived(riderId: string, jobId: string, riderPos: GeoPoint): Promise<Job> {
     const job = await this.assertAssigned(jobId, riderId);
     assertTransition(job.status, 'ARRIVED');
-    if (!isWithinGeofence(riderPos, job.dropoff)) throw new BadRequestException('Not within the drop location');
+    if (!isWithinGeofence(riderPos, job.dropoff, this.env.ARRIVAL_RADIUS_M)) {
+      throw new BadRequestException('Not within the drop location');
+    }
     await this.jobs.updateStatus(jobId, 'ARRIVED');
     await this.jobs.setArrivedAt(jobId, Date.now()); // start the waiting clock for WAIT-policy metering
     return this.mustFind(jobId);

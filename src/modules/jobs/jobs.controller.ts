@@ -73,6 +73,12 @@ export class JobsController {
     return this.jobs.advance(user.id, id, dto.to);
   }
 
+  @Post(':id/arrive-pickup')
+  @RequirePermission('job:accept')
+  arrivePickup(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ArriveDto) {
+    return this.jobs.arriveAtPickup(user.id, id, { lat: dto.lat, lng: dto.lng });
+  }
+
   @Post(':id/arrive')
   @RequirePermission('job:accept')
   arrive(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ArriveDto) {

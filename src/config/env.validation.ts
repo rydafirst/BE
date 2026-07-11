@@ -39,6 +39,10 @@ export const envSchema = z.object({
   // How long an unpaid order stays open before it auto-cancels (no funds captured, so it's safe).
   PAYMENT_WINDOW_MINUTES: z.coerce.number().int().positive().default(20),
 
+  // Geofence radius (metres) a rider must be within to confirm pickup/arrival. Generous by
+  // default to tolerate urban GPS drift; tighten only if you see abuse.
+  ARRIVAL_RADIUS_M: z.coerce.number().int().positive().default(120),
+
   // --- OTP delivery ---------------------------------------------------------
   // How the login OTP reaches the user. `console` (dev) logs it; `email` sends via Resend;
   // `sms` sends via Termii (blocked pending business registration).
