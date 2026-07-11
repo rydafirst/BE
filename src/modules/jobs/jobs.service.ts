@@ -15,6 +15,7 @@ import { signQuote, verifyQuote } from './domain/quote-token.js';
 import { cancellationPolicy } from './domain/cancellation.js';
 import { failedAttemptFee } from './domain/failed-attempt-fee.js';
 import { isPaymentExpired } from './domain/payment-window.js';
+import { coarseArea } from './domain/area.js';
 import { resolutionToSettlement, type Resolution } from '../disputes/domain/dispute.js';
 import { JOB_REPO, type Job, type JobRepository } from './ports.js';
 import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
@@ -25,8 +26,10 @@ const PROGRESS_STEPS: readonly JobStatus[] = ['EN_ROUTE_PICKUP', 'AT_PICKUP', 'I
 
 export type CreatedJob = Job & { paymentLink: string };
 
-/** PII-free projection shown to riders in the discovery feed (no recipient/customer/refund data). */
-export type AvailableJob = Pick<Job, 'id' | 'type' | 'amountMinor' | 'currency' | 'pickup' | 'dropoff' | 'createdAt'>;
+/** PII-free projection shown to riders in the discovery feed. Only a COARSE area is exposed
+ *  pre-accept (no exact coordinates, no recipient/customer/refund data). */
+export type AvailableJob = Pick<Job, 'id' | 'type' | 'amountMinor' | 'currency' | 'createdAt'>
+  & { pickupArea: string; dropoffArea: string };
 
 @Injectable()
 export class JobsService {
@@ -271,9 +274,9 @@ export class JobsService {
         type: j.type,
         amountMinor: j.amountMinor,
         currency: j.currency,
-        pickup: j.pickup,
-        dropoff: j.dropoff,
         createdAt: j.createdAt,
+        pickupArea: coarseArea(j.pickupAddress),
+        dropoffArea: coarseArea(j.dropoffAddress),
       }));
   }
   async status(jobId: string): Promise<JobStatus> { return (await this.mustFind(jobId)).status; }
