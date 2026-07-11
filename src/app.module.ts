@@ -16,6 +16,7 @@ import { RidersModule } from './modules/riders/riders.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { WalletModule } from './modules/wallet/wallet.module.js';
 import { AccountsModule } from './modules/accounts/accounts.module.js';
+import { PresenceModule } from './modules/presence/presence.module.js';
 import { EmailModule } from './modules/email/email.module.js';
 import { EncryptionService } from './common/security/encryption.service.js';
 import { JwtAuthGuard } from './common/auth/jwt-auth.guard.js';
@@ -25,7 +26,7 @@ import { RolesGuard } from './common/auth/roles.guard.js';
 const dataModules = process.env.DB_DRIVER === 'postgres' ? [DatabaseModule, RedisModule] : [];
 
 @Module({
-  imports: [ConfigModule, ...dataModules, EmailModule, HealthModule, AuthModule, IdentityModule, PaymentsModule, JobsModule, ConfirmationsModule, TrackingModule, NotificationsModule, DisputesModule, RidersModule, AdminModule, WalletModule, AccountsModule],
+  imports: [ConfigModule, ...dataModules, EmailModule, HealthModule, AuthModule, IdentityModule, PaymentsModule, JobsModule, ConfirmationsModule, TrackingModule, NotificationsModule, DisputesModule, RidersModule, AdminModule, WalletModule, AccountsModule, PresenceModule],
   providers: [
     EncryptionService,
     // Order matters: authenticate first, then authorize.
