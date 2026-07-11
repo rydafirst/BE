@@ -157,6 +157,7 @@ model Job {
   fallbackPolicy  String?
   flwTxRef        String?   @unique
   flwTxId         String?
+  arrivedAt       DateTime?
   createdAt       DateTime  @default(now())
 
   events          JobEvent[]

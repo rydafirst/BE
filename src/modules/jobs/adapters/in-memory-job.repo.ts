@@ -20,6 +20,9 @@ export class InMemoryJobRepo implements JobRepository {
   async findByTxRef(txRef: string): Promise<Job | null> {
     return [...this.m.values()].find((j) => j.flwTxRef === txRef) ?? null;
   }
+  async setArrivedAt(id: string, atMs: number): Promise<void> {
+    const j = this.m.get(id); if (j) j.arrivedAt = atMs;
+  }
   async setPaymentRefs(id: string, refs: { txRef?: string; txId?: string }): Promise<void> {
     const j = this.m.get(id);
     if (!j) return;

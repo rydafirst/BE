@@ -11,6 +11,7 @@ import { assertTransition, type JobStatus } from './domain/job-state-machine.js'
 import { computeFare, type FareBreakdown } from './domain/fare.js';
 import { haversineMeters, type GeoPoint } from './domain/geo.js';
 import { isWithinGeofence } from '../confirmations/domain/geofence.js';
+import { waitingFee } from '../confirmations/domain/fallback.js';
 import { signQuote, verifyQuote } from './domain/quote-token.js';
 import { cancellationPolicy } from './domain/cancellation.js';
 import { resolutionToSettlement, type Resolution } from '../disputes/domain/dispute.js';
@@ -118,6 +119,7 @@ export class JobsService {
     assertTransition(job.status, 'ARRIVED');
     if (!isWithinGeofence(riderPos, job.dropoff)) throw new BadRequestException('Not within the drop location');
     await this.jobs.updateStatus(jobId, 'ARRIVED');
+    await this.jobs.setArrivedAt(jobId, Date.now()); // start the waiting clock for WAIT-policy metering
     return this.mustFind(jobId);
   }
 
@@ -137,18 +139,29 @@ export class JobsService {
     return { status: 'RELEASED' };
   }
 
-  async failedAttempt(riderId: string, jobId: string): Promise<{ status: JobStatus; attemptFeeMinor: number }> {
+  async failedAttempt(riderId: string, jobId: string): Promise<{ status: JobStatus; attemptFeeMinor: number; waitingFeeMinor: number }> {
     const job = await this.assertAssigned(jobId, riderId);
     assertTransition(job.status, 'FAILED_ATTEMPT');
     await this.jobs.updateStatus(jobId, 'FAILED_ATTEMPT');
-    const fee = Money.of(Math.min(FAILED_ATTEMPT_FEE_MINOR, job.amountMinor));
+
+    // Base attempt fee compensates the wasted trip. For the WAIT policy, add the metered waiting
+    // fee accrued since the rider was verified at the drop-off (10-min grace, then ₦50/min capped).
+    // waitingFee() is a pure, tested function; elapsed time is server-authoritative (arrivedAt).
+    let waitMinor = 0;
+    if (job.fallbackPolicy === 'WAIT' && job.arrivedAt) {
+      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - job.arrivedAt) / 1000));
+      waitMinor = waitingFee(elapsedSeconds).amount;
+    }
+    // Total owed to the rider, never more than what was collected (invariant enforced downstream too).
+    const fee = Money.of(Math.min(FAILED_ATTEMPT_FEE_MINOR + waitMinor, job.amountMinor));
+
     const riderPayout = await this.payout.getPayout(riderId);
     await this.escrow.settle({
       jobId, status: 'FAILED_ATTEMPT', outcome: 'FAILED_ATTEMPT', collected: Money.of(job.amountMinor), attemptFee: fee,
       ...(riderPayout ? { riderPayout } : {}),
       ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),
     });
-    return { status: 'FAILED_ATTEMPT', attemptFeeMinor: fee.amount };
+    return { status: 'FAILED_ATTEMPT', attemptFeeMinor: fee.amount, waitingFeeMinor: waitMinor };
   }
 
   async getJob(actorId: string, jobId: string): Promise<Job> {

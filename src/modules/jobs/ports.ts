@@ -18,6 +18,7 @@ export interface Job {
   flwTxRef?: string;
   flwTxId?: string;
   createdAt: string;
+  arrivedAt?: number; // epoch ms the rider was verified at the drop-off (for waiting-fee metering)
 }
 
 export interface JobRepository {
@@ -30,5 +31,6 @@ export interface JobRepository {
   listByRider(riderId: string): Promise<Job[]>;
   findByTxRef(txRef: string): Promise<Job | null>;
   setPaymentRefs(id: string, refs: { txRef?: string; txId?: string }): Promise<void>;
+  setArrivedAt(id: string, atMs: number): Promise<void>;
 }
 export const JOB_REPO = Symbol('JOB_REPO');

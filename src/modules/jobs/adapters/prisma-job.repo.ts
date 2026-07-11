@@ -34,6 +34,7 @@ export class PrismaJobRepository implements JobRepository {
       ...(r.fallbackPolicy ? { fallbackPolicy: r.fallbackPolicy as Job['fallbackPolicy'] } : {}),
       ...(r.flwTxRef ? { flwTxRef: r.flwTxRef } : {}),
       ...(r.flwTxId ? { flwTxId: r.flwTxId } : {}),
+      ...(r.arrivedAt ? { arrivedAt: r.arrivedAt.getTime() } : {}),
       createdAt: r.createdAt.toISOString(),
     };
   }
@@ -60,6 +61,9 @@ export class PrismaJobRepository implements JobRepository {
       ...(refs.txRef !== undefined ? { flwTxRef: refs.txRef } : {}),
       ...(refs.txId !== undefined ? { flwTxId: refs.txId } : {}),
     } });
+  }
+  async setArrivedAt(id: string, atMs: number): Promise<void> {
+    await this.db.job.update({ where: { id }, data: { arrivedAt: new Date(atMs) } });
   }
   async listByRider(riderId: string): Promise<Job[]> {
     const rows = await this.db.job.findMany({ where: { riderId } });
