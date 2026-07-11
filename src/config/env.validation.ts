@@ -37,8 +37,9 @@ export const envSchema = z.object({
   DB_DRIVER: z.enum(['memory', 'postgres']).default('memory'),
 
   // --- OTP delivery ---------------------------------------------------------
-  // How the login OTP reaches the user. `console` (dev) logs it; `sms` sends via Termii.
-  OTP_CHANNEL: z.enum(['console', 'sms']).default('console'),
+  // How the login OTP reaches the user. `console` (dev) logs it; `email` sends via Resend;
+  // `sms` sends via Termii (blocked pending business registration).
+  OTP_CHANNEL: z.enum(['console', 'sms', 'email']).default('console'),
   TERMII_API_KEY: z.string().default(''),
   TERMII_SENDER_ID: z.string().default('Rydafirst'),
   TERMII_BASE_URL: z.string().url().default('https://api.ng.termii.com'),

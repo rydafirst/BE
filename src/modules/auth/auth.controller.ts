@@ -11,7 +11,7 @@ export class AuthController {
   @Post('otp/request')
   @HttpCode(202)
   async request(@Body() dto: OtpRequestDto): Promise<{ status: 'sent' }> {
-    await this.auth.requestOtp(dto.phone);
+    await this.auth.requestOtp(dto.phone, dto.email);
     return { status: 'sent' };
   }
 

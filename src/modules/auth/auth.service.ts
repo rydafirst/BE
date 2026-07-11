@@ -1,7 +1,11 @@
-import { HttpException, HttpStatus, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { HmacHasher } from '../../common/security/hmac-hasher.js';
 import { checkOtp, generateOtp, OTP_TTL_SECONDS } from './domain/otp.js';
 import { decideRefresh } from './domain/refresh-rotation.js';
+import { ENV } from '../../config/config.module.js';
+import type { Env } from '../../config/env.validation.js';
+import { EMAIL_SENDER, type EmailSender } from '../email/email.port.js';
+import { otpEmail } from './otp-email.template.js';
 import {
   OTP_REPO, REFRESH_REPO, USER_REPO, RATE_LIMITER, TOKEN_SIGNER, OTP_SENDER,
   type OtpRepository, type RefreshTokenRepository, type UserRepository,
@@ -25,10 +29,19 @@ export class AuthService {
     @Inject(RATE_LIMITER) private readonly limiter: RateLimiter,
     @Inject(TOKEN_SIGNER) private readonly tokens: TokenSigner,
     @Inject(OTP_SENDER) private readonly sender: OtpSender,
+    @Inject(EMAIL_SENDER) private readonly email: EmailSender,
+    @Inject(ENV) private readonly env: Env,
   ) {}
 
   /** Request an OTP. Rate-limited; never reveals whether the number is registered. */
-  async requestOtp(phone: string): Promise<void> {
+  async requestOtp(phone: string, email?: string): Promise<void> {
+    // Deliver by email while SMS (Termii) is pending business registration — so an email is
+    // required for the email channel. Validate BEFORE rate-limiting so a missing field is a
+    // plain client error, not a burned attempt.
+    if (this.env.OTP_CHANNEL === 'email' && !email) {
+      throw new BadRequestException('Email is required to receive your code');
+    }
+
     const allowed = await this.limiter.hit(`otp:${phone}`, OTP_REQUESTS_PER_HOUR, 3600);
     if (!allowed) throw new HttpException('Too many requests', HttpStatus.TOO_MANY_REQUESTS);
 
@@ -39,7 +52,18 @@ export class AuthService {
       attempts: 0,
       consumed: false,
     });
-    await this.sender.send(phone, code);
+
+    if (this.env.OTP_CHANNEL === 'email' && email) {
+      const minutes = Math.round(OTP_TTL_SECONDS / 60);
+      await this.email.send({
+        to: email,
+        subject: `Your Rydafirst code is ${code}`,
+        html: otpEmail(code, minutes),
+        text: `Your Rydafirst verification code is ${code}. It expires in ${minutes} minutes. Do not share it with anyone.`,
+      });
+    } else {
+      await this.sender.send(phone, code);
+    }
     // Always returns 202 regardless of state (no enumeration).
   }
 
