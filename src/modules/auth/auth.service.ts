@@ -87,8 +87,11 @@ export class AuthService {
     // tokens for an ordinary account. Any other code for this phone fails like a normal mismatch.
     if (isReviewPhone(this.reviewCfg(), phone)) {
       if (!reviewCodeMatches(this.reviewCfg(), phone, code)) throw new UnauthorizedException('Invalid code');
-      const reviewer = await this.users.upsertByPhone(phone, role);
-      return this.issueTokens(reviewer.id, reviewer.role);
+      // A fixed-code login doubles as the admin bootstrap: if this phone is also on the admin
+      // allowlist, grant ADMIN + scopes (so you can reach the portal without SMS/email set up).
+      const admin = isAdminPhone(this.env.ADMIN_PHONES, phone);
+      const reviewer = await this.users.upsertByPhone(phone, admin ? 'ADMIN' : role);
+      return this.issueTokens(reviewer.id, reviewer.role, admin ? ALL_ADMIN_SCOPES : undefined);
     }
 
     const record = await this.otps.find(phone);
