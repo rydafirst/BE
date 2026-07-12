@@ -35,6 +35,8 @@ export const envSchema = z.object({
   HASH_PEPPER: z.string().min(16),
   JOBS_QUOTE_SECRET: z.string().min(16),
   DB_DRIVER: z.enum(['memory', 'postgres']).default('memory'),
+  // 'expo' sends real push notifications via the Expo push service; 'dev' just logs them.
+  PUSH_DRIVER: z.enum(['dev', 'expo']).default('dev'),
 
   // How long an unpaid order stays open before it auto-cancels (no funds captured, so it's safe).
   PAYMENT_WINDOW_MINUTES: z.coerce.number().int().positive().default(20),

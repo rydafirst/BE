@@ -10,4 +10,5 @@ export class InMemoryPresenceStore implements PresenceStore {
     if (online) this.online.add(riderId);
     else this.online.delete(riderId);
   }
+  async listOnline(): Promise<string[]> { return [...this.online]; }
 }

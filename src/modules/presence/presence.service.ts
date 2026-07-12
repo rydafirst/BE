@@ -7,4 +7,5 @@ export class PresenceService {
 
   get(riderId: string): Promise<boolean> { return this.store.isOnline(riderId); }
   set(riderId: string, online: boolean): Promise<void> { return this.store.setOnline(riderId, online); }
+  listOnline(): Promise<string[]> { return this.store.listOnline(); }
 }

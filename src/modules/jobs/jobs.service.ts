@@ -20,6 +20,9 @@ import { coarseArea } from './domain/area.js';
 import { resolutionToSettlement, type Resolution } from '../disputes/domain/dispute.js';
 import { JOB_REPO, type Job, type JobRepository } from './ports.js';
 import { RATE_LIMITER, type RateLimiter } from '../auth/ports.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { PresenceService } from '../presence/presence.service.js';
+import { ridersToAnnounce } from './domain/broadcast.js';
 import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
 import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
 
@@ -41,7 +44,26 @@ export class JobsService {
     @Inject(RIDER_PAYOUT) private readonly payout: RiderPayoutSource,
     @Inject(RATE_LIMITER) private readonly limiter: RateLimiter,
     private readonly escrow: EscrowService,
+    private readonly notify: NotificationsService,
+    private readonly presence: PresenceService,
   ) {}
+
+  /**
+   * Ring the online rider pool that a job is available to accept (Uber-style job alert).
+   * Push-only and fully best-effort — a broadcast failure can never affect the order or its money.
+   */
+  private async announceToOnlineRiders(jobId: string, excludeRiderId?: string): Promise<void> {
+    try {
+      const online = await this.presence.listOnline();
+      const targets = ridersToAnnounce(online, excludeRiderId ? { exclude: excludeRiderId } : {});
+      if (targets.length === 0) return;
+      await this.notify.announceToRiders(targets, {
+        title: 'New delivery available',
+        body: 'A new job is available near you. Open Rydafirst to accept it.',
+        jobId,
+      });
+    } catch { /* best-effort */ }
+  }
 
   quote(dto: QuoteRequestDto): { quoteToken: string; amountMinor: number; currency: 'NGN'; breakdown: FareBreakdown } {
     const distance = haversineMeters(dto.pickup, dto.dropoff);
@@ -111,6 +133,8 @@ export class JobsService {
       await this.jobs.updateStatus(job.id, 'FUNDED');
       assertTransition('FUNDED', 'SEARCHING');
       await this.jobs.updateStatus(job.id, 'SEARCHING');
+      await this.notify.record(job.customerId, { title: 'Payment received', body: 'Your payment is held safely in escrow. We’re finding you a rider now.', jobId: job.id });
+      await this.announceToOnlineRiders(job.id);
     }
     return { funded: true };
   }
@@ -130,6 +154,8 @@ export class JobsService {
       await this.jobs.updateStatus(job.id, 'FUNDED');
       assertTransition('FUNDED', 'SEARCHING');
       await this.jobs.updateStatus(job.id, 'SEARCHING');
+      await this.notify.record(job.customerId, { title: 'Payment received', body: 'Your payment is held safely in escrow. We’re finding you a rider now.', jobId: job.id });
+      await this.announceToOnlineRiders(job.id);
     }
     return { funded: true, status: 'FUNDED' };
   }
@@ -137,7 +163,9 @@ export class JobsService {
   async accept(riderId: string, jobId: string): Promise<Job> {
     const claimed = await this.jobs.claim(jobId, riderId);
     if (!claimed) throw new ConflictException('Job is no longer available');
-    return this.mustFind(jobId);
+    const job = await this.mustFind(jobId);
+    await this.notify.record(job.customerId, { title: 'Rider assigned', body: 'A rider accepted your delivery and is on the way to pickup.', jobId, urgent: true });
+    return job;
   }
 
   /**
@@ -156,6 +184,9 @@ export class JobsService {
     }
     assertTransition(job.status, 'SEARCHING');
     await this.jobs.release(jobId);
+    await this.notify.record(job.customerId, { title: 'Finding a new rider', body: 'Your rider couldn’t continue, so we’re matching another rider for you.', jobId });
+    // Re-offer to the pool, excluding the rider who just handed it back.
+    await this.announceToOnlineRiders(jobId, riderId);
     return { status: 'SEARCHING' };
   }
 
@@ -204,6 +235,8 @@ export class JobsService {
     });
     assertTransition('COMPLETED', 'RELEASED');
     await this.jobs.updateStatus(jobId, 'RELEASED');
+    await this.notify.record(job.customerId, { title: 'Delivered', body: 'Your delivery is complete. Thanks for riding with Rydafirst.', jobId });
+    await this.notify.record(riderId, { title: 'Payment released', body: 'Delivery confirmed — your earnings have been released.', jobId });
     return { status: 'RELEASED' };
   }
 
@@ -229,6 +262,7 @@ export class JobsService {
       ...(riderPayout ? { riderPayout } : {}),
       ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),
     });
+    await this.notify.record(job.customerId, { title: 'Delivery attempt failed', body: 'The rider couldn’t complete the drop-off. Please check your order for next steps.', jobId, urgent: true });
     return { status: 'FAILED_ATTEMPT', attemptFeeMinor: fee.amount, waitingFeeMinor: feeCalc.waitingMinor };
   }
 
@@ -268,6 +302,14 @@ export class JobsService {
         jobId, status: 'CANCELLED', outcome: 'REFUND_FULL', collected: Money.of(job.amountMinor),
         ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),
       });
+    }
+    await this.notify.record(job.customerId, {
+      title: 'Order cancelled',
+      body: policy.refundFull ? 'Your order was cancelled and the full amount refunded.' : 'Your order was cancelled.',
+      jobId, urgent: true,
+    });
+    if (job.riderId) {
+      await this.notify.record(job.riderId, { title: 'Order cancelled', body: 'A delivery you accepted was cancelled by the customer.', jobId, urgent: true });
     }
     return { status: 'CANCELLED', refunded: policy.refundFull };
   }
