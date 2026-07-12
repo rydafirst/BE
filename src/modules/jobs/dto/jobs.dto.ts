@@ -31,6 +31,8 @@ export class CreateJobDto {
   @IsOptional() @IsString() @Length(1, 300) dropoffAddress?: string;
   @IsOptional() @IsString() @Length(1, 120) pickupArea?: string;     // coarse neighbourhood
   @IsOptional() @IsString() @Length(1, 120) dropoffArea?: string;
+  // Mobile deep-link return target after payment (validated against an allow-list server-side).
+  @IsOptional() @IsString() @Length(1, 200) returnUrl?: string;
 }
 
 export class AdvanceDto {

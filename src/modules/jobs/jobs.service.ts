@@ -86,7 +86,11 @@ export class JobsService {
     };
     await this.jobs.create(job);
 
-    const redirectUrl = `${this.env.WEB_APP_URL}/jobs/${job.id}/track`;
+    // Default return is the web tracking page. The mobile app may request a return to its own
+    // deep-link scheme — allow-listed to `rydafirst://` only, so this can't become an open redirect.
+    const redirectUrl = dto.returnUrl?.startsWith('rydafirst://')
+      ? dto.returnUrl
+      : `${this.env.WEB_APP_URL}/jobs/${job.id}/track`;
     const email = `customer.${customerId}@rydafirst.app`; // TODO: use the customer's real email
     const { txRef, link } = await this.escrow.beginCollection(job.id, Money.of(job.amountMinor), email, redirectUrl);
     await this.jobs.setPaymentRefs(job.id, { txRef });

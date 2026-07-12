@@ -17,8 +17,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     const status =
       exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
-    const safeMessage =
-      exception instanceof HttpException ? exception.message : 'Internal server error';
+
+    // For HttpExceptions, prefer the structured `message` from getResponse() (e.g. the array of
+    // validation errors) over the generic class message like "Bad Request Exception", so clients
+    // see which field failed. Non-HttpExceptions never leak internals — they stay generic.
+    let safeMessage: string | string[] = 'Internal server error';
+    if (exception instanceof HttpException) {
+      const response = exception.getResponse();
+      if (typeof response === 'string') {
+        safeMessage = response;
+      } else if (response && typeof response === 'object' && 'message' in response) {
+        safeMessage = (response as { message: string | string[] }).message;
+      } else {
+        safeMessage = exception.message;
+      }
+    }
 
     // Full detail goes to logs (PII-safe), never to the client.
     this.logger.error(

@@ -55,6 +55,14 @@ export const envSchema = z.object({
   // If RESEND_API_KEY is set, real emails are sent; otherwise emails log to the console.
   RESEND_API_KEY: z.string().default(''),
   EMAIL_FROM: z.string().default('Rydafirst <onboarding@resend.dev>'),
+
+  // --- App Store reviewer login --------------------------------------------
+  // Lets Apple's App Review sign in to this OTP-only app without receiving a live code.
+  // ACTIVE ONLY when BOTH are set (fail-closed). The phone is an ordinary account with no
+  // elevated privileges; the fixed code is what you enter in App Store Connect > Sign-In Info.
+  // Leave both empty in normal operation.
+  REVIEW_LOGIN_PHONE: z.string().default(''),
+  REVIEW_LOGIN_OTP: z.string().default(''),
 }).superRefine((env, ctx) => {
   // Fail-closed: if you turn on Postgres, the infra URLs must be present and valid.
   if (env.DB_DRIVER === 'postgres') {
@@ -69,6 +77,15 @@ export const envSchema = z.object({
   // Fail-closed: if OTPs go out over SMS, the Termii key must be present.
   if (env.OTP_CHANNEL === 'sms' && !env.TERMII_API_KEY) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TERMII_API_KEY'], message: 'required when OTP_CHANNEL=sms' });
+  }
+  // Fail-closed: reviewer login must have BOTH a phone and a fixed 4-8 digit code, or neither.
+  const reviewPhoneSet = env.REVIEW_LOGIN_PHONE.length > 0;
+  const reviewOtpSet = env.REVIEW_LOGIN_OTP.length > 0;
+  if (reviewPhoneSet !== reviewOtpSet) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['REVIEW_LOGIN_OTP'], message: 'REVIEW_LOGIN_PHONE and REVIEW_LOGIN_OTP must be set together' });
+  }
+  if (reviewOtpSet && !/^\d{4,8}$/.test(env.REVIEW_LOGIN_OTP)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['REVIEW_LOGIN_OTP'], message: 'must be 4-8 digits' });
   }
 });
 

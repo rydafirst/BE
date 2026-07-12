@@ -2,6 +2,7 @@ import { BadRequestException, HttpException, HttpStatus, Inject, Injectable, Una
 import { HmacHasher } from '../../common/security/hmac-hasher.js';
 import { checkOtp, generateOtp, OTP_TTL_SECONDS } from './domain/otp.js';
 import { decideRefresh } from './domain/refresh-rotation.js';
+import { isReviewPhone, reviewCodeMatches, type ReviewLoginConfig } from './domain/review-login.js';
 import { ENV } from '../../config/config.module.js';
 import type { Env } from '../../config/env.validation.js';
 import { EMAIL_SENDER, type EmailSender } from '../email/email.port.js';
@@ -33,8 +34,17 @@ export class AuthService {
     @Inject(ENV) private readonly env: Env,
   ) {}
 
+  /** Config for the App Store reviewer login (empty strings => disabled). */
+  private reviewCfg(): ReviewLoginConfig {
+    return { phone: this.env.REVIEW_LOGIN_PHONE, otp: this.env.REVIEW_LOGIN_OTP };
+  }
+
   /** Request an OTP. Rate-limited; never reveals whether the number is registered. */
   async requestOtp(phone: string, email?: string): Promise<void> {
+    // App Store reviewer identity: no live code is sent (a fixed code is accepted at verify).
+    // Returns 202 like any other request, so the flow is indistinguishable to the client.
+    if (isReviewPhone(this.reviewCfg(), phone)) return;
+
     // Deliver by email while SMS (Termii) is pending business registration — so an email is
     // required for the email channel. Validate BEFORE rate-limiting so a missing field is a
     // plain client error, not a burned attempt.
@@ -69,6 +79,14 @@ export class AuthService {
 
   /** Verify an OTP and issue tokens. Generic failure on any invalid case. */
   async verifyOtp(phone: string, code: string, role: 'CUSTOMER' | 'RIDER' = 'CUSTOMER'): Promise<TokenPair> {
+    // App Store reviewer identity: accept the configured fixed code (constant-time), then issue
+    // tokens for an ordinary account. Any other code for this phone fails like a normal mismatch.
+    if (isReviewPhone(this.reviewCfg(), phone)) {
+      if (!reviewCodeMatches(this.reviewCfg(), phone, code)) throw new UnauthorizedException('Invalid code');
+      const reviewer = await this.users.upsertByPhone(phone, role);
+      return this.issueTokens(reviewer.id, reviewer.role);
+    }
+
     const record = await this.otps.find(phone);
     if (!record) throw new UnauthorizedException('Invalid code'); // no enumeration
 
