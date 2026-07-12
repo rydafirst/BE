@@ -266,3 +266,28 @@ model AuditLog {
   createdAt DateTime @default(now())
   @@index([entity])
 }
+
+// A rider's chosen vehicle track (the onboarding aggregate root for documents).
+model RiderOnboarding {
+  riderId   String   @id
+  track     String   // BIKE | CAR | KEKE
+  updatedAt DateTime @updatedAt
+}
+
+// One row per uploaded rider document (re-uploads bump `version`; prior versions kept for audit).
+model RiderDocument {
+  id              String   @id @default(uuid())
+  riderId         String
+  track           String   // BIKE | CAR | KEKE
+  type            String
+  fileKey         String
+  status          String   // SUBMITTED | UNDER_REVIEW | APPROVED | REJECTED | EXPIRED
+  rejectionReason String?
+  issuedAt        BigInt?  // epoch ms
+  expiresAt       BigInt?  // epoch ms
+  version         Int
+  reviewedBy      String?
+  reviewedAt      BigInt?  // epoch ms
+  createdAt       DateTime @default(now())
+  @@index([riderId])
+}
