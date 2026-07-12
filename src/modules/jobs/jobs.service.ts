@@ -21,7 +21,7 @@ import { JOB_REPO, type Job, type JobRepository } from './ports.js';
 import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
 import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
 
-const QUOTE_TTL_MS = 120_000;
+const QUOTE_TTL_MS = 900_000; // 15 minutes — long enough to read options + pay without the quote going stale
 const PROGRESS_STEPS: readonly JobStatus[] = ['EN_ROUTE_PICKUP', 'AT_PICKUP', 'IN_PROGRESS', 'EN_ROUTE_DROP'];
 
 export type CreatedJob = Job & { paymentLink: string };
