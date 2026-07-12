@@ -31,6 +31,8 @@ export interface PaymentProvider {
   }): Promise<{ providerRef: string }>;
   /** Refund a collection back to the customer's source. */
   refund(p: { transactionId: string; amount: Money }): Promise<{ providerRef: string }>;
+  /** Name enquiry: resolve the account holder's name for a bank + account number. */
+  resolveAccount(p: { bankCode: string; accountNumber: string }): Promise<{ accountName: string }>;
   /** Verify a webhook's `verif-hash` header against the configured secret. */
   verifyWebhookSignature(signatureHeader: string): boolean;
 }

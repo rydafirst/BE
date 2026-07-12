@@ -69,6 +69,11 @@ export class EscrowService {
     return this.provider.verifyTransaction(transactionId);
   }
 
+  /** Name enquiry for a bank + account number (so the client never types the account name). */
+  resolveAccount(bankCode: string, accountNumber: string): Promise<{ accountName: string }> {
+    return this.provider.resolveAccount({ bankCode, accountNumber });
+  }
+
   /** Settle: release (transfer to rider) and/or refund (to customer source). */
   async settle(p: SettleParams): Promise<{ providerRef: string }> {
     this.assertOutcomeAllowed(p.status, p.outcome);

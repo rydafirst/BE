@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { EncryptionService } from '../../common/security/encryption.service.js';
+import { EscrowService } from '../payments/escrow.service.js';
 import { isValidAccountNumber, isValidBankCode, maskAccountNumber, type AccountType } from './domain/bank-account.js';
 import { ACCOUNT_REPO, type AccountRepository } from './ports.js';
 
@@ -13,7 +14,6 @@ export interface MaskedAccount {
 export interface SetAccountInput {
   bankCode: string;
   accountNumber: string;
-  accountName: string;
   type?: AccountType;
 }
 
@@ -22,7 +22,15 @@ export class AccountsService {
   constructor(
     @Inject(ACCOUNT_REPO) private readonly repo: AccountRepository,
     private readonly enc: EncryptionService,
+    private readonly escrow: EscrowService,
   ) {}
+
+  /** Name enquiry preview: validate the bank + number and return the real account holder name. */
+  async resolve(bankCode: string, accountNumber: string): Promise<{ accountName: string }> {
+    if (!isValidBankCode(bankCode)) throw new BadRequestException('Invalid bank code');
+    if (!isValidAccountNumber(accountNumber)) throw new BadRequestException('Account number must be 10 digits');
+    return this.escrow.resolveAccount(bankCode, accountNumber);
+  }
 
   /** Safe view for the client — the full number is never returned, only the last 4 digits. */
   async getMasked(userId: string): Promise<MaskedAccount | null> {
@@ -32,12 +40,18 @@ export class AccountsService {
     return { bankCode: a.bankCode, accountName: a.accountName, accountNumberMasked: maskAccountNumber(number), type: a.type };
   }
 
-  /** Validate, then store with the account number encrypted at rest. Returns the masked view. */
+  /**
+   * Validate the bank + number, resolve the real account holder name via the bank (name enquiry),
+   * then store with the number encrypted at rest. The client never supplies the name, so a stored
+   * account always shows the true holder — and resolution doubles as proof the account exists.
+   */
   async set(userId: string, input: SetAccountInput): Promise<MaskedAccount> {
     if (!isValidBankCode(input.bankCode)) throw new BadRequestException('Invalid bank code');
     if (!isValidAccountNumber(input.accountNumber)) throw new BadRequestException('Account number must be 10 digits');
-    const name = input.accountName.trim();
-    if (name.length < 2) throw new BadRequestException('Account name is required');
+
+    const { accountName } = await this.escrow.resolveAccount(input.bankCode, input.accountNumber);
+    const name = accountName.trim();
+    if (name.length < 2) throw new BadRequestException('Could not verify that account');
 
     await this.repo.upsert(userId, {
       bankCode: input.bankCode,

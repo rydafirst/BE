@@ -6,10 +6,12 @@ import { ACCOUNT_REPO } from './ports.js';
 import { InMemoryAccountRepo } from './adapters/in-memory-account.repo.js';
 import { PrismaAccountRepo } from './adapters/prisma-account.repo.js';
 import { AccountRiderPayout } from './adapters/account-rider-payout.js';
+import { PaymentsModule } from '../payments/payments.module.js';
 
 const usePg = process.env.DB_DRIVER === 'postgres';
 
 @Module({
+  imports: [PaymentsModule], // for name-enquiry (EscrowService.resolveAccount)
   controllers: [AccountsController],
   providers: [
     AccountsService,

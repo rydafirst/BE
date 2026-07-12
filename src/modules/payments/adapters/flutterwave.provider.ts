@@ -75,6 +75,16 @@ export class FlutterwaveProvider implements PaymentProvider {
     return { providerRef: String(body?.data?.id ?? p.transactionId) };
   }
 
+  async resolveAccount(p: { bankCode: string; accountNumber: string }): Promise<{ accountName: string }> {
+    const body = await this.call('POST', '/accounts/resolve', {
+      account_number: p.accountNumber,
+      account_bank: p.bankCode,
+    });
+    const name = body?.data?.account_name as string | undefined;
+    if (!name) throw new ServiceUnavailableException('Could not resolve account name');
+    return { accountName: name };
+  }
+
   verifyWebhookSignature(signatureHeader: string): boolean {
     const a = Buffer.from(signatureHeader ?? '');
     const b = Buffer.from(this.webhookSecret);

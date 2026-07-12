@@ -44,6 +44,11 @@ export class FakePaymentProvider implements PaymentProvider {
     return { providerRef: `fake_refund_${randomUUID().slice(0, 8)}` };
   }
 
+  async resolveAccount(p: { bankCode: string; accountNumber: string }): Promise<{ accountName: string }> {
+    // DEV: return a deterministic placeholder so the resolve-name flow works without real keys.
+    return { accountName: `Test Account ${p.accountNumber.slice(-4)}` };
+  }
+
   verifyWebhookSignature(signatureHeader: string): boolean {
     return signatureHeader === this.webhookSecret;
   }
