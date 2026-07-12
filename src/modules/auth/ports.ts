@@ -1,6 +1,6 @@
 import type { OtpRecord } from './domain/otp.js';
 import type { RefreshTokenState } from './domain/refresh-rotation.js';
-import type { Role } from '../../common/auth/roles.js';
+import type { AdminScope, Role } from '../../common/auth/roles.js';
 
 export interface OtpRepository {
   save(phone: string, record: OtpRecord): Promise<void>;
@@ -30,7 +30,7 @@ export interface RateLimiter {
 export const RATE_LIMITER = Symbol('RATE_LIMITER');
 
 export interface TokenSigner {
-  signAccess(payload: { sub: string; role: Role }): string;
+  signAccess(payload: { sub: string; role: Role; adminScopes?: AdminScope[] }): string;
   newRefreshToken(): string; // opaque random token (stored hashed)
 }
 export const TOKEN_SIGNER = Symbol('TOKEN_SIGNER');

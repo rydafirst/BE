@@ -37,6 +37,25 @@ export const envSchema = z.object({
   DB_DRIVER: z.enum(['memory', 'postgres']).default('memory'),
   // 'expo' sends real push notifications via the Expo push service; 'dev' just logs them.
   PUSH_DRIVER: z.enum(['dev', 'expo']).default('dev'),
+  // Admin allowlist: comma-separated phone numbers granted ADMIN + all review scopes on login.
+  // No self-service admin signup — provisioning is explicit and auditable.
+  ADMIN_PHONES: z.string().default('').transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+
+  // --- Rider onboarding / documents ----------------------------------------
+  // Operating city — decides which permits (LASDRI/LASRRA/hackney/keke) become required documents.
+  LAUNCH_CITY: z.enum(['LAGOS', 'ABUJA', 'PORT_HARCOURT', 'OTHER']).default('LAGOS'),
+  // Whether a guarantor document is required to onboard (off by default; mirrors Uber/Bolt).
+  REQUIRE_GUARANTOR: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  // Fail-closed rider gate: when 'true' (default) a rider must have all documents approved before
+  // they can go online OR accept a job. Set 'false' only for a staged rollout before the document
+  // pipeline is live (e.g. R2 not yet configured) — it re-opens the gate, so keep it on in prod.
+  ENFORCE_RIDER_CLEARANCE: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  // Where document images live: 'memory' (dev) or 'r2' (Cloudflare R2 / S3-compatible, prod).
+  DOCUMENT_STORE_DRIVER: z.enum(['memory', 'r2']).default('memory'),
+  R2_ACCOUNT_ID: z.string().default(''),
+  R2_ACCESS_KEY_ID: z.string().default(''),
+  R2_SECRET_ACCESS_KEY: z.string().default(''),
+  R2_BUCKET: z.string().default(''),
 
   // How long an unpaid order stays open before it auto-cancels (no funds captured, so it's safe).
   PAYMENT_WINDOW_MINUTES: z.coerce.number().int().positive().default(20),
@@ -77,6 +96,12 @@ export const envSchema = z.object({
   if (env.PAYMENT_DRIVER === 'flutterwave') {
     if (!env.FLW_SECRET_KEY) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLW_SECRET_KEY'], message: 'required when PAYMENT_DRIVER=flutterwave' });
     if (!env.FLW_WEBHOOK_SECRET) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLW_WEBHOOK_SECRET'], message: 'required when PAYMENT_DRIVER=flutterwave' });
+  }
+  // Fail-closed: if documents go to R2, all R2 credentials must be present.
+  if (env.DOCUMENT_STORE_DRIVER === 'r2') {
+    for (const k of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET'] as const) {
+      if (!env[k]) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [k], message: 'required when DOCUMENT_STORE_DRIVER=r2' });
+    }
   }
   // Fail-closed: if OTPs go out over SMS, the Termii key must be present.
   if (env.OTP_CHANNEL === 'sms' && !env.TERMII_API_KEY) {

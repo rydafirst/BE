@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
 import type { AuthUser } from './current-user.decorator.js';
-import type { Role } from './roles.js';
+import type { AdminScope, Role } from './roles.js';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -37,9 +37,13 @@ export class JwtAuthGuard implements CanActivate {
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
     try {
       const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as {
-        sub: string; role: Role;
+        sub: string; role: Role; adminScopes?: AdminScope[];
       };
-      return { id: payload.sub, role: payload.role };
+      return {
+        id: payload.sub,
+        role: payload.role,
+        ...(payload.adminScopes ? { adminScopes: payload.adminScopes } : {}),
+      };
     } catch {
       return null;
     }

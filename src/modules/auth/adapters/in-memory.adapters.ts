@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { OtpRecord } from '../domain/otp.js';
 import type { RefreshTokenState } from '../domain/refresh-rotation.js';
-import type { Role } from '../../../common/auth/roles.js';
+import type { AdminScope, Role } from '../../../common/auth/roles.js';
 import type {
   OtpRepository, RefreshTokenRepository, UserRepository, RateLimiter, TokenSigner, OtpSender,
 } from '../ports.js';
@@ -67,7 +67,7 @@ export class InMemoryRateLimiter implements RateLimiter {
 export class DevTokenSigner implements TokenSigner {
   // DEV signer (HMAC). Production: RS256 JWT via @nestjs/jwt with rotating keys.
   private secret = process.env.JWT_ACCESS_SECRET ?? 'dev';
-  signAccess(payload: { sub: string; role: Role }): string {
+  signAccess(payload: { sub: string; role: Role; adminScopes?: AdminScope[] }): string {
     const body = Buffer.from(JSON.stringify({ ...payload, iat: Date.now() })).toString('base64url');
     const sig = createHmac('sha256', this.secret).update(body).digest('base64url');
     return `${body}.${sig}`;

@@ -22,6 +22,7 @@ import { JOB_REPO, type Job, type JobRepository } from './ports.js';
 import { RATE_LIMITER, type RateLimiter } from '../auth/ports.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { PresenceService } from '../presence/presence.service.js';
+import { DocumentsService } from '../documents/documents.service.js';
 import { ridersToAnnounce } from './domain/broadcast.js';
 import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
 import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
@@ -46,6 +47,7 @@ export class JobsService {
     private readonly escrow: EscrowService,
     private readonly notify: NotificationsService,
     private readonly presence: PresenceService,
+    private readonly documents: DocumentsService,
   ) {}
 
   /**
@@ -161,6 +163,11 @@ export class JobsService {
   }
 
   async accept(riderId: string, jobId: string): Promise<Job> {
+    // Fail-closed: an uncleared rider can't take a job even by calling this endpoint directly
+    // (the go-online gate isn't the only enforcement point). Toggle with ENFORCE_RIDER_CLEARANCE.
+    if (this.env.ENFORCE_RIDER_CLEARANCE && !(await this.documents.isRiderCleared(riderId))) {
+      throw new ForbiddenException('Complete your document verification before accepting jobs');
+    }
     const claimed = await this.jobs.claim(jobId, riderId);
     if (!claimed) throw new ConflictException('Job is no longer available');
     const job = await this.mustFind(jobId);

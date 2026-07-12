@@ -9,6 +9,7 @@ import { AccountsModule } from '../accounts/accounts.module.js';
 import { AccountRiderPayout } from '../accounts/adapters/account-rider-payout.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { PresenceModule } from '../presence/presence.module.js';
+import { DocumentsModule } from '../documents/documents.module.js';
 import { WebhooksController } from './webhooks.controller.js';
 import { PrismaJobRepository } from './adapters/prisma-job.repo.js';
 import { RATE_LIMITER } from '../auth/ports.js';
@@ -18,7 +19,7 @@ import { RedisRateLimiter } from '../auth/adapters/redis-rate-limiter.js';
 const usePg = process.env.DB_DRIVER === 'postgres';
 
 @Module({
-  imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule],
+  imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule, DocumentsModule],
   controllers: [JobsController, WebhooksController],
   providers: [
     JobsService,

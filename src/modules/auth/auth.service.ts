@@ -3,6 +3,8 @@ import { HmacHasher } from '../../common/security/hmac-hasher.js';
 import { checkOtp, generateOtp, OTP_TTL_SECONDS } from './domain/otp.js';
 import { decideRefresh } from './domain/refresh-rotation.js';
 import { isReviewPhone, reviewCodeMatches, type ReviewLoginConfig } from './domain/review-login.js';
+import { ALL_ADMIN_SCOPES, isAdminPhone } from './domain/admin-login.js';
+import type { AdminScope } from '../../common/auth/roles.js';
 import { ENV } from '../../config/config.module.js';
 import type { Env } from '../../config/env.validation.js';
 import { EMAIL_SENDER, type EmailSender } from '../email/email.port.js';
@@ -100,8 +102,10 @@ export class AuthService {
     }
 
     await this.otps.markConsumed(phone);
-    const user = await this.users.upsertByPhone(phone, role);
-    return this.issueTokens(user.id, user.role);
+    // An allowlisted admin phone is provisioned as ADMIN with the full review scope set.
+    const admin = isAdminPhone(this.env.ADMIN_PHONES, phone);
+    const user = await this.users.upsertByPhone(phone, admin ? 'ADMIN' : role);
+    return this.issueTokens(user.id, user.role, admin ? ALL_ADMIN_SCOPES : undefined);
   }
 
   /** Rotate a refresh token; detect replay of a stolen token and revoke the family. */
@@ -122,10 +126,18 @@ export class AuthService {
     return { accessToken: access, refreshToken: newRefresh };
   }
 
-  private async issueTokens(userId: string, role: 'CUSTOMER' | 'RIDER' | 'ADMIN'): Promise<TokenPair> {
+  private async issueTokens(
+    userId: string,
+    role: 'CUSTOMER' | 'RIDER' | 'ADMIN',
+    adminScopes?: readonly AdminScope[],
+  ): Promise<TokenPair> {
     const refresh = this.tokens.newRefreshToken();
     await this.refreshes.createFamily(userId, this.hasher.hash(refresh));
-    return { accessToken: this.tokens.signAccess({ sub: userId, role }), refreshToken: refresh };
+    const access = this.tokens.signAccess({
+      sub: userId, role,
+      ...(adminScopes && adminScopes.length ? { adminScopes: [...adminScopes] } : {}),
+    });
+    return { accessToken: access, refreshToken: refresh };
   }
 
   ttlSeconds(): number {
