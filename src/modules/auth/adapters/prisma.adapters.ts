@@ -54,7 +54,16 @@ export class PrismaRefreshRepo implements RefreshTokenRepository {
 export class PrismaUserRepo implements UserRepository {
   constructor(private readonly db: PrismaService) {}
   async upsertByPhone(phone: string, role: Role): Promise<{ id: string; role: Role }> {
-    const u = await this.db.user.upsert({ where: { phone }, update: {}, create: { phone, role } });
-    return { id: u.id, role: u.role as Role };
+    const existing = await this.db.user.findUnique({ where: { phone } });
+    if (!existing) {
+      const created = await this.db.user.create({ data: { phone, role } });
+      return { id: created.id, role: created.role as Role };
+    }
+    // Follow the role the user is signing in as (a phone can be a customer today, a rider tomorrow),
+    // but never downgrade an admin through OTP login.
+    const nextRole: Role = existing.role === 'ADMIN' ? (existing.role as Role) : role;
+    if (existing.role === nextRole) return { id: existing.id, role: existing.role as Role };
+    const updated = await this.db.user.update({ where: { phone }, data: { role: nextRole } });
+    return { id: updated.id, role: updated.role as Role };
   }
 }

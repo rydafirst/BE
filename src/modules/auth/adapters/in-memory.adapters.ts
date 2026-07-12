@@ -45,7 +45,9 @@ export class InMemoryUserRepo implements UserRepository {
   private byPhone = new Map<string, { id: string; role: Role }>();
   async upsertByPhone(phone: string, role: Role): Promise<{ id: string; role: Role }> {
     let u = this.byPhone.get(phone);
-    if (!u) { u = { id: randomUUID(), role }; this.byPhone.set(phone, u); }
+    if (!u) { u = { id: randomUUID(), role }; this.byPhone.set(phone, u); return u; }
+    // Follow the signed-in role (customer today, rider tomorrow); never downgrade an admin.
+    if (u.role !== 'ADMIN') u.role = role;
     return u;
   }
 }
