@@ -47,6 +47,8 @@ export const envSchema = z.object({
   // How the login OTP reaches the user. `console` (dev) logs it; `email` sends via Resend;
   // `sms` sends via Termii (blocked pending business registration).
   OTP_CHANNEL: z.enum(['console', 'sms', 'email']).default('console'),
+  // Max OTP code requests per phone per hour. Raise while testing (e.g. 100); keep low in production.
+  OTP_REQUESTS_PER_HOUR: z.coerce.number().int().positive().default(5),
   TERMII_API_KEY: z.string().default(''),
   TERMII_SENDER_ID: z.string().default('Rydafirst'),
   TERMII_BASE_URL: z.string().url().default('https://api.ng.termii.com'),

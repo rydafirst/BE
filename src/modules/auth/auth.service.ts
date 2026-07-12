@@ -13,7 +13,8 @@ import {
   type RateLimiter, type TokenSigner, type OtpSender,
 } from './ports.js';
 
-const OTP_REQUESTS_PER_HOUR = 5;
+// Default OTP request cap per phone per hour; override via OTP_REQUESTS_PER_HOUR (raise while testing).
+const DEFAULT_OTP_REQUESTS_PER_HOUR = 5;
 
 export interface TokenPair {
   accessToken: string;
@@ -52,7 +53,8 @@ export class AuthService {
       throw new BadRequestException('Email is required to receive your code');
     }
 
-    const allowed = await this.limiter.hit(`otp:${phone}`, OTP_REQUESTS_PER_HOUR, 3600);
+    const perHour = this.env.OTP_REQUESTS_PER_HOUR || DEFAULT_OTP_REQUESTS_PER_HOUR;
+    const allowed = await this.limiter.hit(`otp:${phone}`, perHour, 3600);
     if (!allowed) throw new HttpException('Too many requests', HttpStatus.TOO_MANY_REQUESTS);
 
     const code = generateOtp();
