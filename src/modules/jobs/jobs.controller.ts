@@ -90,4 +90,11 @@ export class JobsController {
   failedAttempt(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.jobs.failedAttempt(user.id, id);
   }
+
+  // ---- Rider: hand an accepted job back to the pool (before pickup only) ----
+  @Post(':id/release')
+  @RequirePermission('job:accept')
+  release(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.releaseJob(user.id, id);
+  }
 }

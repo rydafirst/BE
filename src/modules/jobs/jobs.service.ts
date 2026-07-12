@@ -13,11 +13,13 @@ import { haversineMeters, type GeoPoint } from './domain/geo.js';
 import { isWithinGeofence } from '../confirmations/domain/geofence.js';
 import { signQuote, verifyQuote } from './domain/quote-token.js';
 import { cancellationPolicy } from './domain/cancellation.js';
+import { canReleaseJob, MAX_RIDER_RELEASES_PER_DAY, RELEASE_WINDOW_SECONDS } from './domain/rider-release.js';
 import { failedAttemptFee } from './domain/failed-attempt-fee.js';
 import { isPaymentExpired } from './domain/payment-window.js';
 import { coarseArea } from './domain/area.js';
 import { resolutionToSettlement, type Resolution } from '../disputes/domain/dispute.js';
 import { JOB_REPO, type Job, type JobRepository } from './ports.js';
+import { RATE_LIMITER, type RateLimiter } from '../auth/ports.js';
 import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
 import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
 
@@ -37,6 +39,7 @@ export class JobsService {
     @Inject(ENV) private readonly env: Env,
     @Inject(JOB_REPO) private readonly jobs: JobRepository,
     @Inject(RIDER_PAYOUT) private readonly payout: RiderPayoutSource,
+    @Inject(RATE_LIMITER) private readonly limiter: RateLimiter,
     private readonly escrow: EscrowService,
   ) {}
 
@@ -135,6 +138,25 @@ export class JobsService {
     const claimed = await this.jobs.claim(jobId, riderId);
     if (!claimed) throw new ConflictException('Job is no longer available');
     return this.mustFind(jobId);
+  }
+
+  /**
+   * Rider releases an accepted job back to the pool (before pickup only) so another rider is
+   * matched. No money moves — the escrow stays held and the order returns to SEARCHING. Rate-capped
+   * per rider to discourage accept-then-drop abuse.
+   */
+  async releaseJob(riderId: string, jobId: string): Promise<{ status: JobStatus }> {
+    const job = await this.assertAssigned(jobId, riderId);
+    if (!canReleaseJob(job.status)) {
+      throw new ConflictException('You can only release a job before pickup');
+    }
+    const withinCap = await this.limiter.hit(`release:${riderId}`, MAX_RIDER_RELEASES_PER_DAY, RELEASE_WINDOW_SECONDS);
+    if (!withinCap) {
+      throw new ConflictException('You have released too many jobs today. Please contact support.');
+    }
+    assertTransition(job.status, 'SEARCHING');
+    await this.jobs.release(jobId);
+    return { status: 'SEARCHING' };
   }
 
   async advance(riderId: string, jobId: string, to: JobStatus): Promise<Job> {

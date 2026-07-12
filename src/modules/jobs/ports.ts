@@ -33,6 +33,8 @@ export interface JobRepository {
   updateStatus(id: string, status: JobStatus): Promise<void>;
   /** Atomically assign a rider ONLY if the job is still SEARCHING (first accept wins). */
   claim(id: string, riderId: string): Promise<boolean>;
+  /** Release an accepted job back to the pool: clear the rider and set status back to SEARCHING. */
+  release(id: string): Promise<void>;
   listActive(): Promise<Job[]>;
   listByRider(riderId: string): Promise<Job[]>;
   listByCustomer(customerId: string): Promise<Job[]>;

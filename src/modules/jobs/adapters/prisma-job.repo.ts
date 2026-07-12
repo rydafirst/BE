@@ -61,6 +61,11 @@ export class PrismaJobRepository implements JobRepository {
     return res.count === 1; // exactly one row updated => this rider won the race
   }
 
+  /** Release back to the pool: clear the rider and reopen for matching. */
+  async release(id: string): Promise<void> {
+    await this.db.job.update({ where: { id }, data: { status: 'SEARCHING', riderId: null } });
+  }
+
   async findByTxRef(txRef: string): Promise<Job | null> {
     const r = await this.db.job.findUnique({ where: { flwTxRef: txRef } });
     return r ? this.find(r.id) : null;

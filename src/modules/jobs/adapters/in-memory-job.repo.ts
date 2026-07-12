@@ -39,4 +39,10 @@ export class InMemoryJobRepo implements JobRepository {
     j.riderId = riderId;
     return true;
   }
+  async release(id: string): Promise<void> {
+    const j = this.m.get(id);
+    if (!j) return;
+    j.status = 'SEARCHING';
+    delete j.riderId;
+  }
 }
