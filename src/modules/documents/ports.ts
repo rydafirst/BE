@@ -39,6 +39,19 @@ export interface DocumentRepo {
   getTrack(riderId: string): Promise<VehicleTrack | null>;
   /** Every rider who has begun onboarding (chosen a track and/or uploaded a document). */
   listRiderIds(): Promise<string[]>;
+  // Rider identity + vehicle details (shown to the customer once the rider is assigned).
+  getProfile(riderId: string): Promise<RiderProfile>;
+  setProfile(riderId: string, patch: { legalName?: string; vehiclePlate?: string; vehicleColor?: string }): Promise<void>;
+  setNameVerified(riderId: string, verified: boolean): Promise<void>;
+}
+
+/** The rider's onboarding identity: chosen vehicle, legal name (verified vs Gov ID), plate + colour. */
+export interface RiderProfile {
+  track: VehicleTrack | null;
+  legalName?: string;
+  nameVerified: boolean;
+  vehiclePlate?: string;
+  vehicleColor?: string;
 }
 export const DOCUMENT_REPO = Symbol('DOCUMENT_REPO');
 

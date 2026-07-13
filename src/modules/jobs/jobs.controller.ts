@@ -2,7 +2,13 @@ import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decorator.js';
 import { JobsService } from './jobs.service.js';
+import { IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { AdvanceDto, ArriveDto, ConfirmPaymentDto, CreateJobDto, QuoteRequestDto } from './dto/jobs.dto.js';
+
+class RatingDto {
+  @IsInt() @Min(1) @Max(5) stars!: number;
+  @IsOptional() @IsString() @Length(0, 500) comment?: string;
+}
 
 @Controller({ path: 'jobs', version: '1' })
 export class JobsController {
@@ -28,6 +34,13 @@ export class JobsController {
     return this.jobs.myJobs(user.id);
   }
 
+  // Completed deliveries the customer hasn't rated yet (declared before :id).
+  @Get('pending-ratings')
+  @RequirePermission('job:read:own')
+  pendingRatings(@CurrentUser() user: AuthUser) {
+    return this.jobs.pendingRatings(user.id);
+  }
+
   // ---- Rider: discovery feed (declared before :id so "available" isn't read as an id) ----
   @Get('available')
   @RequirePermission('job:accept')
@@ -46,6 +59,18 @@ export class JobsController {
   @RequirePermission('job:read:own')
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.jobs.getJob(user.id, id);
+  }
+
+  @Get(':id/rider')
+  @RequirePermission('job:read:own')
+  riderSummary(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.assignedRiderSummary(user.id, id);
+  }
+
+  @Post(':id/rating')
+  @RequirePermission('job:read:own')
+  rate(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: RatingDto) {
+    return this.jobs.rateJob(user.id, id, dto);
   }
 
   @Post(':id/confirm-payment')

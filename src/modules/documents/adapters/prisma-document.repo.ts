@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
 import type { DocumentStatus, DocumentType, VehicleTrack } from '../domain/document-catalog.js';
-import type { DocumentRecord, DocumentRepo, NewDocument } from '../ports.js';
+import type { DocumentRecord, DocumentRepo, NewDocument, RiderProfile } from '../ports.js';
 
 // Row shape returned by Prisma for a RiderDocument (BigInt epoch-ms fields).
 interface Row {
@@ -78,7 +78,37 @@ export class PrismaDocumentRepo implements DocumentRepo {
 
   async getTrack(riderId: string): Promise<VehicleTrack | null> {
     const r = await this.db.riderOnboarding.findUnique({ where: { riderId } });
-    return r ? (r.track as VehicleTrack) : null;
+    return r?.track ? (r.track as VehicleTrack) : null;
+  }
+
+  async getProfile(riderId: string): Promise<RiderProfile> {
+    const r = await this.db.riderOnboarding.findUnique({ where: { riderId } });
+    if (!r) return { track: null, nameVerified: false };
+    return {
+      track: r.track ? (r.track as VehicleTrack) : null,
+      nameVerified: r.nameVerified,
+      ...(r.legalName ? { legalName: r.legalName } : {}),
+      ...(r.vehiclePlate ? { vehiclePlate: r.vehiclePlate } : {}),
+      ...(r.vehicleColor ? { vehicleColor: r.vehicleColor } : {}),
+    };
+  }
+
+  async setProfile(riderId: string, patch: { legalName?: string; vehiclePlate?: string; vehicleColor?: string }): Promise<void> {
+    // Changing the legal name resets verification (an admin must re-check it against the Gov ID).
+    const data = {
+      ...(patch.legalName !== undefined ? { legalName: patch.legalName, nameVerified: false } : {}),
+      ...(patch.vehiclePlate !== undefined ? { vehiclePlate: patch.vehiclePlate } : {}),
+      ...(patch.vehicleColor !== undefined ? { vehicleColor: patch.vehicleColor } : {}),
+    };
+    await this.db.riderOnboarding.upsert({ where: { riderId }, create: { riderId, ...data }, update: data });
+  }
+
+  async setNameVerified(riderId: string, verified: boolean): Promise<void> {
+    await this.db.riderOnboarding.upsert({
+      where: { riderId },
+      create: { riderId, nameVerified: verified },
+      update: { nameVerified: verified },
+    });
   }
 
   async listRiderIds(): Promise<string[]> {

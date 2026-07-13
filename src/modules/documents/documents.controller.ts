@@ -4,6 +4,7 @@ import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decor
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { DocumentsService } from './documents.service.js';
 import type { DocumentType, VehicleTrack } from './domain/document-catalog.js';
+import { VEHICLE_COLORS, type VehicleColor } from './domain/rider-profile.js';
 
 const TRACKS: VehicleTrack[] = ['BIKE', 'CAR', 'KEKE'];
 const TYPES: DocumentType[] = [
@@ -12,6 +13,12 @@ const TYPES: DocumentType[] = [
 ];
 
 class SetTrackDto { @IsIn(TRACKS) track!: VehicleTrack; }
+
+class RiderProfileDto {
+  @IsOptional() @IsString() @Length(2, 80) legalName?: string;
+  @IsOptional() @IsString() @Length(4, 20) vehiclePlate?: string;
+  @IsOptional() @IsIn(VEHICLE_COLORS) vehicleColor?: VehicleColor;
+}
 
 class UploadDto {
   @IsIn(TYPES) type!: DocumentType;
@@ -36,6 +43,18 @@ export class DocumentsController {
   @RequirePermission('rider:documents:manage')
   setTrack(@CurrentUser() user: AuthUser, @Body() dto: SetTrackDto) {
     return this.documents.setTrack(user.id, dto.track);
+  }
+
+  @Get('profile')
+  @RequirePermission('rider:documents:manage')
+  profile(@CurrentUser() user: AuthUser) {
+    return this.documents.getRiderProfile(user.id);
+  }
+
+  @Put('profile')
+  @RequirePermission('rider:documents:manage')
+  updateProfile(@CurrentUser() user: AuthUser, @Body() dto: RiderProfileDto) {
+    return this.documents.updateRiderProfile(user.id, dto);
   }
 
   @Post('upload-url')

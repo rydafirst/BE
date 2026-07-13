@@ -1,11 +1,15 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-import { IsString, Length } from 'class-validator';
+import { IsBoolean, IsString, Length } from 'class-validator';
 import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decorator.js';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { DocumentsService } from './documents.service.js';
 
 class RejectDto {
   @IsString() @Length(3, 300) reason!: string;
+}
+
+class VerifyNameDto {
+  @IsBoolean() verified!: boolean;
 }
 
 // Reviewer/admin document approval. Gated by the same scope as KYC review (admin:kyc:review), so an
@@ -36,5 +40,12 @@ export class DocumentsAdminController {
   @RequirePermission('admin:kyc:review')
   reject(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: RejectDto) {
     return this.documents.rejectDocument(id, user.id, dto.reason);
+  }
+
+  // Confirm (or revoke) that the rider's legal name matches their Gov ID.
+  @Post('riders/:riderId/verify-name')
+  @RequirePermission('admin:kyc:review')
+  verifyName(@Param('riderId') riderId: string, @Body() dto: VerifyNameDto) {
+    return this.documents.setRiderNameVerified(riderId, dto.verified);
   }
 }

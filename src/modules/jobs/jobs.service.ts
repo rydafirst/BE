@@ -17,12 +17,16 @@ import { canReleaseJob, MAX_RIDER_RELEASES_PER_DAY, RELEASE_WINDOW_SECONDS } fro
 import { failedAttemptFee } from './domain/failed-attempt-fee.js';
 import { isPaymentExpired } from './domain/payment-window.js';
 import { coarseArea } from './domain/area.js';
+import { approximatePoint } from './domain/approx.js';
 import { resolutionToSettlement, type Resolution } from '../disputes/domain/dispute.js';
 import { JOB_REPO, type Job, type JobRepository } from './ports.js';
 import { RATE_LIMITER, type RateLimiter } from '../auth/ports.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { PresenceService } from '../presence/presence.service.js';
 import { DocumentsService } from '../documents/documents.service.js';
+import { RatingsService } from '../ratings/ratings.service.js';
+import { isValidStars } from '../ratings/domain/rating.js';
+import type { Rating } from '../ratings/ports.js';
 import { ridersToAnnounce } from './domain/broadcast.js';
 import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
 import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
@@ -35,7 +39,7 @@ export type CreatedJob = Job & { paymentLink: string };
 /** PII-free projection shown to riders in the discovery feed. Only a COARSE area is exposed
  *  pre-accept (no exact coordinates, no recipient/customer/refund data). */
 export type AvailableJob = Pick<Job, 'id' | 'type' | 'amountMinor' | 'currency' | 'createdAt'>
-  & { pickupArea: string; dropoffArea: string };
+  & { pickupArea: string; dropoffArea: string; pickupApprox: { lat: number; lng: number } };
 
 @Injectable()
 export class JobsService {
@@ -48,6 +52,7 @@ export class JobsService {
     private readonly notify: NotificationsService,
     private readonly presence: PresenceService,
     private readonly documents: DocumentsService,
+    private readonly ratings: RatingsService,
   ) {}
 
   /**
@@ -279,6 +284,49 @@ export class JobsService {
     return this.expireIfStale(job);
   }
 
+  /** The assigned rider's public details (name, vehicle) for the job's customer or rider to see. */
+  async assignedRiderSummary(actorId: string, jobId: string): Promise<{
+    rider: (Awaited<ReturnType<DocumentsService['riderSummaryFor']>> & { rating: number; ratingCount: number }) | null;
+  }> {
+    const job = await this.mustFind(jobId);
+    if (job.customerId !== actorId && job.riderId !== actorId) throw new ForbiddenException();
+    if (!job.riderId) return { rider: null };
+    const rider = await this.documents.riderSummaryFor(job.riderId);
+    const { average, count } = await this.ratings.averageForRider(job.riderId);
+    return { rider: { ...rider, rating: average, ratingCount: count } };
+  }
+
+  /** Customer rates the rider on a completed delivery (one rating per job, fail-closed). */
+  async rateJob(customerId: string, jobId: string, input: { stars: number; comment?: string }): Promise<Rating> {
+    if (!isValidStars(input.stars)) throw new BadRequestException('Rating must be from 1 to 5 stars');
+    const job = await this.mustFind(jobId);
+    if (job.customerId !== customerId) throw new ForbiddenException();
+    if (!['COMPLETED', 'RELEASED'].includes(job.status)) throw new ConflictException('You can only rate a completed delivery');
+    if (!job.riderId) throw new ConflictException('This delivery had no rider to rate');
+    if (await this.ratings.hasRatingForJob(jobId)) throw new ConflictException('You already rated this delivery');
+    return this.ratings.record({
+      jobId, riderId: job.riderId, customerId, stars: input.stars,
+      ...(input.comment ? { comment: input.comment } : {}),
+    });
+  }
+
+  /** Completed deliveries the customer hasn't rated yet — drives the rating prompt. */
+  async pendingRatings(customerId: string): Promise<Array<{ jobId: string; amountMinor: number; createdAt: string; dropoffArea?: string; riderName?: string }>> {
+    const jobs = await this.jobs.listByCustomer(customerId);
+    const done = jobs.filter((j) => ['COMPLETED', 'RELEASED'].includes(j.status) && j.riderId);
+    const out: Array<{ jobId: string; amountMinor: number; createdAt: string; dropoffArea?: string; riderName?: string }> = [];
+    for (const j of done) {
+      if (await this.ratings.hasRatingForJob(j.id)) continue;
+      const summary = j.riderId ? await this.documents.riderSummaryFor(j.riderId) : null;
+      out.push({
+        jobId: j.id, amountMinor: j.amountMinor, createdAt: j.createdAt,
+        ...(j.dropoffArea ? { dropoffArea: j.dropoffArea } : {}),
+        ...(summary?.name ? { riderName: summary.name } : {}),
+      });
+    }
+    return out;
+  }
+
   /** A customer's order history, newest first (unpaid orders past the window are auto-cancelled). */
   async myJobs(customerId: string): Promise<Job[]> {
     const jobs = await this.jobs.listByCustomer(customerId);
@@ -370,6 +418,8 @@ export class JobsService {
         // Prefer the neighbourhood captured at booking; fall back to parsing the full address.
         pickupArea: j.pickupArea || coarseArea(j.pickupAddress),
         dropoffArea: j.dropoffArea || coarseArea(j.dropoffAddress),
+        // Approximate (area-level) pin so a rider can see where jobs are without the exact address.
+        pickupApprox: approximatePoint(j.pickup),
       }));
   }
   async status(jobId: string): Promise<JobStatus> { return (await this.mustFind(jobId)).status; }

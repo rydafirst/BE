@@ -267,11 +267,27 @@ model AuditLog {
   @@index([entity])
 }
 
-// A rider's chosen vehicle track (the onboarding aggregate root for documents).
+// A rider's onboarding aggregate: chosen vehicle track + the identity/vehicle details customers see.
 model RiderOnboarding {
-  riderId   String   @id
-  track     String   // BIKE | CAR | KEKE
-  updatedAt DateTime @updatedAt
+  riderId      String   @id
+  track        String?  // BIKE | CAR | KEKE (chosen first in the flow)
+  legalName    String?  // government-registered name (verified against the Gov ID by an admin)
+  nameVerified Boolean  @default(false)
+  vehiclePlate String?
+  vehicleColor String?  // fixed palette (see rider-profile.ts)
+  updatedAt    DateTime @updatedAt
+}
+
+// A customer's rating of the rider after a completed delivery (one per job).
+model Rating {
+  id         String   @id @default(uuid())
+  jobId      String   @unique
+  riderId    String
+  customerId String
+  stars      Int
+  comment    String?
+  createdAt  DateTime @default(now())
+  @@index([riderId])
 }
 
 // One row per uploaded rider document (re-uploads bump `version`; prior versions kept for audit).

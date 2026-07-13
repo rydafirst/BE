@@ -7,8 +7,9 @@ import {
   type CatalogContext, type DocumentStateOrMissing, type DocumentType, type OnboardingStatus, type VehicleTrack,
 } from './domain/document-catalog.js';
 import { sortReviewQueue, type QueueStatus } from './domain/review-queue.js';
+import { isValidLegalName, isValidPlate, isValidVehicleColor, normalizePlate } from './domain/rider-profile.js';
 import {
-  DOCUMENT_REPO, DOCUMENT_STORE, type DocumentRecord, type DocumentRepo, type DocumentStore,
+  DOCUMENT_REPO, DOCUMENT_STORE, type DocumentRecord, type DocumentRepo, type DocumentStore, type RiderProfile,
 } from './ports.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 
@@ -175,11 +176,12 @@ export class DocumentsService {
 
   /** Full document detail for one rider, each with a short-lived signed preview URL. */
   async riderDetail(riderId: string): Promise<{
-    riderId: string; track: VehicleTrack | null; status: QueueStatus;
+    riderId: string; track: VehicleTrack | null; status: QueueStatus; profile: RiderProfile;
     documents: Array<{ id: string; type: DocumentType; label: string; status: string; version: number; rejectionReason?: string; issuedAt?: number; expiresAt?: number; previewUrl: string }>;
   }> {
     const now = Date.now();
     const { track, status } = await this.onboardingFor(riderId, now);
+    const profile = await this.repo.getProfile(riderId);
     const docs = await this.repo.listByRider(riderId);
     // Latest version per type only (older versions stay in the audit trail but aren't shown).
     const latest = new Map<DocumentType, DocumentRecord>();
@@ -191,7 +193,7 @@ export class DocumentsService {
       ...(d.expiresAt ? { expiresAt: d.expiresAt } : {}),
       previewUrl: await this.store.signedGetUrl(d.fileKey, VIEW_URL_TTL_SECONDS),
     })));
-    return { riderId, track, status, documents };
+    return { riderId, track, status, profile, documents };
   }
 
   async approveDocument(documentId: string, reviewerId: string): Promise<{ riderStatus: QueueStatus }> {
@@ -222,5 +224,52 @@ export class DocumentsService {
     const doc = await this.repo.findById(documentId);
     if (!doc) throw new NotFoundException('Document not found');
     return doc;
+  }
+
+  // ---- Rider profile (identity + vehicle shown to customers) ----
+
+  getRiderProfile(riderId: string): Promise<RiderProfile> {
+    return this.repo.getProfile(riderId);
+  }
+
+  /** Rider sets their legal name / plate / colour. Changing the name resets verification. */
+  async updateRiderProfile(
+    riderId: string,
+    input: { legalName?: string; vehiclePlate?: string; vehicleColor?: string },
+  ): Promise<RiderProfile> {
+    const patch: { legalName?: string; vehiclePlate?: string; vehicleColor?: string } = {};
+    if (input.legalName !== undefined) {
+      if (!isValidLegalName(input.legalName)) throw new BadRequestException('Enter your name exactly as it appears on your ID');
+      patch.legalName = input.legalName.trim();
+    }
+    if (input.vehiclePlate !== undefined) {
+      if (!isValidPlate(input.vehiclePlate)) throw new BadRequestException('Enter a valid vehicle plate number');
+      patch.vehiclePlate = normalizePlate(input.vehiclePlate);
+    }
+    if (input.vehicleColor !== undefined) {
+      if (!isValidVehicleColor(input.vehicleColor)) throw new BadRequestException('Choose a valid vehicle colour');
+      patch.vehicleColor = input.vehicleColor;
+    }
+    await this.repo.setProfile(riderId, patch);
+    return this.repo.getProfile(riderId);
+  }
+
+  /** Admin confirms the rider's legal name matches their Gov ID. */
+  setRiderNameVerified(riderId: string, verified: boolean): Promise<void> {
+    return this.repo.setNameVerified(riderId, verified);
+  }
+
+  /** The rider details a customer sees once a rider is assigned to their job. */
+  async riderSummaryFor(riderId: string): Promise<{
+    name?: string; nameVerified: boolean; vehicleType: VehicleTrack | null; vehiclePlate?: string; vehicleColor?: string;
+  }> {
+    const p = await this.repo.getProfile(riderId);
+    return {
+      nameVerified: p.nameVerified,
+      vehicleType: p.track,
+      ...(p.legalName ? { name: p.legalName } : {}),
+      ...(p.vehiclePlate ? { vehiclePlate: p.vehiclePlate } : {}),
+      ...(p.vehicleColor ? { vehicleColor: p.vehicleColor } : {}),
+    };
   }
 }
