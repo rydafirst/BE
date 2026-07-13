@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Length, Min } from 'class-validator';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decorator.js';
@@ -27,6 +27,13 @@ export class DisputeController {
   @RequirePermission('job:read:own')
   open(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: OpenDisputeDto) {
     return this.disputes.open(user.id, id, dto.counterEvidence ?? false);
+  }
+
+  // Admin: list all disputes for review (declared before :id routes elsewhere is N/A here).
+  @Get('admin/disputes')
+  @RequirePermission('admin:dispute:resolve')
+  list() {
+    return this.disputes.list();
   }
 
   // Admin resolves an escalated dispute.

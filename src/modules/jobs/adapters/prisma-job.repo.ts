@@ -100,4 +100,10 @@ export class PrismaJobRepository implements JobRepository {
     for (const r of rows) { const j = await this.find(r.id); if (j) out.push(j); }
     return out;
   }
+  async listRecent(limit: number): Promise<Job[]> {
+    const rows = await this.db.job.findMany({ orderBy: { createdAt: 'desc' }, take: limit, select: { id: true } });
+    const out: Job[] = [];
+    for (const r of rows) { const j = await this.find(r.id); if (j) out.push(j); }
+    return out;
+  }
 }

@@ -116,6 +116,12 @@ export class EscrowService {
     return reconcile(ours, provider);
   }
 
+  /** Escrow money totals (minor units) for the admin finance view. */
+  async escrowTotals(): Promise<{ held: number; released: number; refunded: number }> {
+    const t = await this.ledger.totals();
+    return { held: t.held.amount, released: t.released.amount, refunded: t.refunded.amount };
+  }
+
   async releasedEarningsForJobs(jobIds: readonly string[]): Promise<number> {
     return this.ledger.sumCreditForJobs('RIDER_PAYABLE', jobIds);
   }

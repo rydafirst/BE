@@ -33,4 +33,12 @@ export class PrismaDisputeRepo implements DisputeRepository {
       },
     });
   }
+  async list(): Promise<DisputeRecord[]> {
+    const rows = await this.db.dispute.findMany({ orderBy: { createdAt: 'desc' } });
+    return (rows as Array<{ id: string; jobId: string; openedBy: string; status: DisputeRecord['status']; tier: string; resolution: string | null; createdAt: Date; resolvedAt: Date | null }>).map((r) => ({
+      id: r.id, jobId: r.jobId, openedBy: r.openedBy, status: r.status, tier: r.tier as 'auto' | 'manual',
+      ...(r.resolution ? { resolution: r.resolution as DisputeRecord['resolution'] } : {}),
+      createdAt: r.createdAt.toISOString(), ...(r.resolvedAt ? { resolvedAt: r.resolvedAt.toISOString() } : {}),
+    }));
+  }
 }

@@ -8,6 +8,7 @@ import { PrismaDocumentRepo } from './adapters/prisma-document.repo.js';
 import { InMemoryDocumentStore } from './adapters/in-memory-document.store.js';
 import { R2DocumentStore } from './adapters/r2-document.store.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { SettingsModule } from '../settings/settings.module.js';
 
 // Records persist in Postgres when DB_DRIVER=postgres (shared across instances, survive restarts),
 // otherwise in memory (dev/tests). Storage uses real Cloudflare R2 when DOCUMENT_STORE_DRIVER=r2
@@ -16,7 +17,7 @@ const usePg = process.env.DB_DRIVER === 'postgres';
 const useR2 = process.env.DOCUMENT_STORE_DRIVER === 'r2';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, SettingsModule],
   controllers: [DocumentsController, DocumentsAdminController],
   providers: [
     DocumentsService,

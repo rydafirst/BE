@@ -15,5 +15,7 @@ export interface DisputeRepository {
   create(d: DisputeRecord): Promise<void>;
   find(id: string): Promise<DisputeRecord | null>;
   update(id: string, patch: Partial<DisputeRecord>): Promise<void>;
+  /** All disputes, newest first (admin review list). */
+  list(): Promise<DisputeRecord[]>;
 }
 export const DISPUTE_REPO = Symbol('DISPUTE_REPO');

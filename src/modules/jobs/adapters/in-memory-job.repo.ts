@@ -14,6 +14,9 @@ export class InMemoryJobRepo implements JobRepository {
   async listActive(): Promise<Job[]> {
     return [...this.m.values()];
   }
+  async listRecent(limit: number): Promise<Job[]> {
+    return [...this.m.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
+  }
   async listByRider(riderId: string): Promise<Job[]> {
     return [...this.m.values()].filter((j) => j.riderId === riderId);
   }

@@ -10,4 +10,7 @@ export class InMemoryDisputeRepo implements DisputeRepository {
   async update(id: string, patch: Partial<DisputeRecord>): Promise<void> {
     const cur = this.m.get(id); if (cur) this.m.set(id, { ...cur, ...patch });
   }
+  async list(): Promise<DisputeRecord[]> {
+    return [...this.m.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
 }

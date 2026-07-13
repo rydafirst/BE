@@ -25,6 +25,7 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { PresenceService } from '../presence/presence.service.js';
 import { DocumentsService } from '../documents/documents.service.js';
 import { RatingsService } from '../ratings/ratings.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 import { isValidStars } from '../ratings/domain/rating.js';
 import type { Rating } from '../ratings/ports.js';
 import { ridersToAnnounce } from './domain/broadcast.js';
@@ -53,6 +54,7 @@ export class JobsService {
     private readonly presence: PresenceService,
     private readonly documents: DocumentsService,
     private readonly ratings: RatingsService,
+    private readonly settings: SettingsService,
   ) {}
 
   /**
@@ -169,8 +171,8 @@ export class JobsService {
 
   async accept(riderId: string, jobId: string): Promise<Job> {
     // Fail-closed: an uncleared rider can't take a job even by calling this endpoint directly
-    // (the go-online gate isn't the only enforcement point). Toggle with ENFORCE_RIDER_CLEARANCE.
-    if (this.env.ENFORCE_RIDER_CLEARANCE && !(await this.documents.isRiderCleared(riderId))) {
+    // (the go-online gate isn't the only enforcement point). Toggle via admin settings.
+    if ((await this.settings.enforceRiderClearance()) && !(await this.documents.isRiderCleared(riderId))) {
       throw new ForbiddenException('Complete your document verification before accepting jobs');
     }
     const claimed = await this.jobs.claim(jobId, riderId);
@@ -393,6 +395,7 @@ export class JobsService {
   }
 
   async listActiveJobs(): Promise<Job[]> { return this.jobs.listActive(); }
+  async listRecentJobs(limit = 100): Promise<Job[]> { return this.jobs.listRecent(limit); }
   async jobsForRider(riderId: string): Promise<Job[]> { return this.jobs.listByRider(riderId); }
 
   /**

@@ -1,7 +1,5 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { ENV } from '../../config/config.module.js';
-import type { Env } from '../../config/env.validation.js';
 import {
   documentOnboardingStatus, documentsClearRider, requiredDocuments, specFor,
   type CatalogContext, type DocumentStateOrMissing, type DocumentType, type OnboardingStatus, type VehicleTrack,
@@ -12,6 +10,7 @@ import {
   DOCUMENT_REPO, DOCUMENT_STORE, type DocumentRecord, type DocumentRepo, type DocumentStore, type RiderProfile,
 } from './ports.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 const UPLOAD_URL_TTL_SECONDS = 300;   // presigned PUT is valid for 5 minutes
 const VIEW_URL_TTL_SECONDS = 120;     // signed GET (reviewer previews) valid for 2 minutes
@@ -30,14 +29,15 @@ export interface ChecklistItem {
 @Injectable()
 export class DocumentsService {
   constructor(
-    @Inject(ENV) private readonly env: Env,
     @Inject(DOCUMENT_REPO) private readonly repo: DocumentRepo,
     @Inject(DOCUMENT_STORE) private readonly store: DocumentStore,
     private readonly notify: NotificationsService,
+    private readonly settings: SettingsService,
   ) {}
 
-  private ctx(): CatalogContext {
-    return { city: this.env.LAUNCH_CITY, requireGuarantor: this.env.REQUIRE_GUARANTOR };
+  private async ctx(): Promise<CatalogContext> {
+    const s = await this.settings.effective();
+    return { city: s.launchCity, requireGuarantor: s.requireGuarantor };
   }
 
   /** Choose (or change) the rider's vehicle track — decides which documents are required. */
@@ -70,7 +70,7 @@ export class DocumentsService {
     const track = await this.repo.getTrack(riderId);
     if (!track) return { track: null, onboarding: 'NO_TRACK', items: [] };
 
-    const required = requiredDocuments(track, this.ctx());
+    const required = requiredDocuments(track, await this.ctx());
     const stateByType = await this.latestStateByType(riderId, Date.now());
     const docs = await this.repo.listByRider(riderId);
     const latestReason = new Map<DocumentType, { reason?: string; expiresAt?: number }>();
@@ -106,7 +106,7 @@ export class DocumentsService {
     if (!ALLOWED_CONTENT.has(input.contentType)) throw new BadRequestException('Unsupported file type');
     const track = await this.repo.getTrack(riderId);
     if (!track) throw new BadRequestException('Choose your vehicle type first');
-    const required = requiredDocuments(track, this.ctx());
+    const required = requiredDocuments(track, await this.ctx());
     if (!required.includes(input.type)) throw new BadRequestException('This document is not required for your vehicle');
 
     const spec = specFor(input.type);
@@ -146,7 +146,7 @@ export class DocumentsService {
   private async onboardingFor(riderId: string, now: number): Promise<{ track: VehicleTrack | null; status: QueueStatus; oldestPendingAt: number }> {
     const track = await this.repo.getTrack(riderId);
     if (!track) return { track: null, status: 'NO_TRACK', oldestPendingAt: Number.MAX_SAFE_INTEGER };
-    const required = requiredDocuments(track, this.ctx());
+    const required = requiredDocuments(track, await this.ctx());
     const stateByType = await this.latestStateByType(riderId, now);
     const status = documentOnboardingStatus(
       required,

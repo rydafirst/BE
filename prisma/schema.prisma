@@ -278,6 +278,12 @@ model RiderOnboarding {
   updatedAt    DateTime @updatedAt
 }
 
+// Runtime-editable operational settings (admin overrides overlaying env defaults).
+model Setting {
+  key   String @id
+  value String
+}
+
 // A customer's rating of the rider after a completed delivery (one per job).
 model Rating {
   id         String   @id @default(uuid())

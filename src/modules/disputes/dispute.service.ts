@@ -16,6 +16,9 @@ export class DisputeService {
     @Inject(DISPUTE_REPO) private readonly disputes: DisputeRepository,
   ) {}
 
+  /** All disputes for the admin review list (newest first). */
+  list(): Promise<DisputeRecord[]> { return this.disputes.list(); }
+
   /** Open a dispute: freeze funds, auto-assemble signals, resolve if clear-cut else escalate. */
   async open(actorId: string, jobId: string, counterEvidence = false): Promise<DisputeRecord> {
     const job = await this.jobs.getJob(actorId, jobId); // participant check + current status
