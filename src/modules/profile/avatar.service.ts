@@ -6,6 +6,7 @@ import type { CustomerPhotoSource } from '../jobs/customer-photo.port.js';
 const UPLOAD_TTL_SECONDS = 300;
 const VIEW_TTL_SECONDS = 300;
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024; // 5 MB
 
 /**
  * User profile avatars, stored in the same private object store as rider documents (never public;
@@ -23,10 +24,13 @@ export class AvatarService implements CustomerPhotoSource {
   private keyFor(userId: string): string { return `avatars/${userId}`; }
 
   /** Presigned one-time upload URL for the caller's own avatar; records the key on the user. */
-  async requestUpload(userId: string, contentType: string): Promise<{ uploadUrl: string }> {
+  async requestUpload(userId: string, contentType: string, sizeBytes: number): Promise<{ uploadUrl: string }> {
     if (!ALLOWED.has(contentType)) throw new BadRequestException('Only JPEG, PNG or WebP images are allowed');
+    if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) throw new BadRequestException('Invalid image size');
+    if (sizeBytes > MAX_AVATAR_BYTES) throw new BadRequestException('Image must be 5 MB or smaller');
     const key = this.keyFor(userId);
-    const { uploadUrl } = await this.store.presignPut(key, contentType, UPLOAD_TTL_SECONDS);
+    // Bind the exact size into the signature so the store also rejects any oversized/mismatched body.
+    const { uploadUrl } = await this.store.presignPut(key, contentType, UPLOAD_TTL_SECONDS, sizeBytes);
     await this.users.setPhotoKey(userId, key);
     return { uploadUrl };
   }

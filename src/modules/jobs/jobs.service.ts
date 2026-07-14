@@ -696,6 +696,9 @@ export class JobsService {
     const res = await this.escrow.settle({
       jobId, status: 'DISPUTE_RESOLVED', outcome: resolutionToSettlement(resolution),
       collected: Money.of(job.amountMinor),
+      // A dispute resolved in the rider's favour is still a completed delivery — the platform keeps
+      // its fee (parity with a normal release). Refund/split outcomes take no fee (money returns).
+      ...(resolution === 'RELEASE' ? { platformFee: Money.of(job.platformFeeMinor ?? 0) } : {}),
       ...(opts.riderShareMinor !== undefined ? { riderShare: Money.of(opts.riderShareMinor) } : {}),
       ...(riderPayout ? { riderPayout } : {}),
       ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),

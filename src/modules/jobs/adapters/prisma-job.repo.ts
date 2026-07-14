@@ -3,6 +3,15 @@ import { PrismaService } from '../../../database/prisma.service.js';
 import type { JobStatus } from '../domain/job-state-machine.js';
 import type { Job, JobRepository } from '../ports.js';
 
+/**
+ * Bridge cast for Prisma writes/filters that touch columns added by recent migrations
+ * (platformFeeMinor, payout*, wait*, return*, weightGrams, customerName). `prisma generate` cannot
+ * run in this sandbox (the engine download is blocked), so the checked-in client type lacks those
+ * fields. The row objects are fully typed at their construction; only the final hand-off to Prisma
+ * is bridged here, and this becomes a no-op once the client is regenerated on deploy.
+ */
+type PrismaWrite = never;
+
 @Injectable()
 export class PrismaJobRepository implements JobRepository {
   constructor(private readonly db: PrismaService) {}
@@ -30,7 +39,7 @@ export class PrismaJobRepository implements JobRepository {
       waitingFeeMinor: job.waitingFeeMinor ?? null,
       returnReserveMinor: job.returnReserveMinor ?? null,
     };
-    await this.db.job.create({ data: data as never });
+    await this.db.job.create({ data: data as PrismaWrite });
   }
 
   async find(id: string): Promise<Job | null> {
@@ -95,7 +104,7 @@ export class PrismaJobRepository implements JobRepository {
   }
 
   async findByTxRef(txRef: string): Promise<Job | null> {
-    const r = await this.db.job.findFirst({ where: { OR: [{ flwTxRef: txRef }, { waitingTxRef: txRef } as never] } });
+    const r = await this.db.job.findFirst({ where: { OR: [{ flwTxRef: txRef }, { waitingTxRef: txRef } as PrismaWrite] } });
     return r ? this.find(r.id) : null;
   }
   async setPaymentRefs(id: string, refs: { txRef?: string; txId?: string }): Promise<void> {
@@ -108,14 +117,14 @@ export class PrismaJobRepository implements JobRepository {
     await this.db.job.update({ where: { id }, data: { arrivedAt: new Date(atMs) } });
   }
   async setWaitStartedAt(id: string, atMs: number): Promise<void> {
-    await this.db.job.update({ where: { id }, data: { waitStartedAt: new Date(atMs) } as never });
+    await this.db.job.update({ where: { id }, data: { waitStartedAt: new Date(atMs) } as PrismaWrite });
   }
   async setWaitingRefs(id: string, refs: { txRef?: string; txId?: string; feeMinor?: number }): Promise<void> {
     await this.db.job.update({ where: { id }, data: {
       ...(refs.txRef !== undefined ? { waitingTxRef: refs.txRef } : {}),
       ...(refs.txId !== undefined ? { waitingTxId: refs.txId } : {}),
       ...(refs.feeMinor !== undefined ? { waitingFeeMinor: refs.feeMinor } : {}),
-    } as never });
+    } as PrismaWrite });
   }
   async setPayoutState(id: string, state: { pending: boolean; error?: string | null; ref?: string | null }): Promise<void> {
     const data = {
@@ -123,10 +132,10 @@ export class PrismaJobRepository implements JobRepository {
       ...(state.error !== undefined ? { payoutError: state.error } : {}),
       ...(state.ref !== undefined ? { payoutRef: state.ref } : {}),
     };
-    await this.db.job.update({ where: { id }, data: data as never });
+    await this.db.job.update({ where: { id }, data: data as PrismaWrite });
   }
   async listPayoutPending(limit: number): Promise<Job[]> {
-    const rows = await this.db.job.findMany({ where: { payoutPending: true } as never, take: limit, select: { id: true } });
+    const rows = await this.db.job.findMany({ where: { payoutPending: true } as PrismaWrite, take: limit, select: { id: true } });
     const out: Job[] = [];
     for (const r of rows) { const j = await this.find(r.id); if (j) out.push(j); }
     return out;

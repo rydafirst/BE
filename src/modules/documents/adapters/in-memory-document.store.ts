@@ -8,7 +8,7 @@ import type { DocumentStore } from '../ports.js';
  */
 @Injectable()
 export class InMemoryDocumentStore implements DocumentStore {
-  async presignPut(key: string, _contentType: string, _ttlSeconds: number): Promise<{ uploadUrl: string; key: string }> {
+  async presignPut(key: string, _contentType: string, _ttlSeconds: number, _contentLength?: number): Promise<{ uploadUrl: string; key: string }> {
     return { uploadUrl: `memory://upload/${key}`, key };
   }
   async signedGetUrl(key: string, _ttlSeconds: number): Promise<string> {

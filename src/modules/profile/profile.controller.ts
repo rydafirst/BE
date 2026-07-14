@@ -1,11 +1,12 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
-import { IsIn, IsString } from 'class-validator';
+import { IsIn, IsInt, IsString, Max, Min } from 'class-validator';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decorator.js';
 import { AvatarService } from './avatar.service.js';
 
 class AvatarUploadDto {
   @IsString() @IsIn(['image/jpeg', 'image/png', 'image/webp']) contentType!: string;
+  @IsInt() @Min(1) @Max(5 * 1024 * 1024) sizeBytes!: number; // ≤ 5 MB
 }
 
 @Controller({ path: 'me/avatar', version: '1' })
@@ -16,7 +17,7 @@ export class ProfileController {
   @Post('upload-url')
   @RequirePermission('account:manage:own')
   requestUpload(@CurrentUser() user: AuthUser, @Body() dto: AvatarUploadDto) {
-    return this.avatars.requestUpload(user.id, dto.contentType);
+    return this.avatars.requestUpload(user.id, dto.contentType, dto.sizeBytes);
   }
 
   /** My current avatar (short-lived signed URL), or null. */

@@ -25,8 +25,13 @@ export class R2DocumentStore implements DocumentStore {
     });
   }
 
-  async presignPut(key: string, contentType: string, ttlSeconds: number): Promise<{ uploadUrl: string; key: string }> {
-    const cmd = new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType });
+  async presignPut(key: string, contentType: string, ttlSeconds: number, contentLength?: number): Promise<{ uploadUrl: string; key: string }> {
+    // Signing ContentLength binds the exact byte count into the presigned request, so R2 rejects a
+    // body of any other size — an enforced cap the client can't bypass by lying about the size.
+    const cmd = new PutObjectCommand({
+      Bucket: this.bucket, Key: key, ContentType: contentType,
+      ...(contentLength !== undefined ? { ContentLength: contentLength } : {}),
+    });
     const uploadUrl = await getSignedUrl(this.client, cmd, { expiresIn: ttlSeconds });
     return { uploadUrl, key };
   }

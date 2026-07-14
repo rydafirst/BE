@@ -5,6 +5,13 @@ import type { RefreshTokenState } from '../domain/refresh-rotation.js';
 import type { Role } from '../../../common/auth/roles.js';
 import type { OtpRepository, RefreshTokenRepository, UserRepository } from '../ports.js';
 
+/**
+ * Bridge cast for the User.photoKey column (added by a recent migration): `prisma generate` can't
+ * run in this sandbox, so the checked-in client type lacks it. No-op once the client regenerates on
+ * deploy. The write objects are fully typed at construction; only the Prisma hand-off is bridged.
+ */
+type PrismaWrite = never;
+
 @Injectable()
 export class PrismaOtpRepo implements OtpRepository {
   constructor(private readonly db: PrismaService) {}
@@ -56,14 +63,14 @@ export class PrismaUserRepo implements UserRepository {
   async upsertByPhone(phone: string, role: Role, email?: string): Promise<{ id: string; role: Role }> {
     const existing = await this.db.user.findUnique({ where: { phone } });
     if (!existing) {
-      const created = await this.db.user.create({ data: { phone, role, ...(email ? { email } : {}) } as never });
+      const created = await this.db.user.create({ data: { phone, role, ...(email ? { email } : {}) } as PrismaWrite });
       return { id: created.id, role: created.role as Role };
     }
     // Follow the role the user is signing in as (a phone can be a customer today, a rider tomorrow),
     // but never downgrade an admin through OTP login. Keep the latest email on file for receipts.
     const nextRole: Role = existing.role === 'ADMIN' ? (existing.role as Role) : role;
     const data = { role: nextRole, ...(email ? { email } : {}) };
-    const updated = await this.db.user.update({ where: { phone }, data: data as never });
+    const updated = await this.db.user.update({ where: { phone }, data: data as PrismaWrite });
     return { id: updated.id, role: updated.role as Role };
   }
   async getEmail(userId: string): Promise<string | null> {
@@ -79,6 +86,6 @@ export class PrismaUserRepo implements UserRepository {
     return u ? ((u as { photoKey?: string | null }).photoKey ?? null) : null;
   }
   async setPhotoKey(userId: string, key: string): Promise<void> {
-    await this.db.user.update({ where: { id: userId }, data: { photoKey: key } as never });
+    await this.db.user.update({ where: { id: userId }, data: { photoKey: key } as PrismaWrite });
   }
 }

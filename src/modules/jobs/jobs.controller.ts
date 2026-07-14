@@ -1,8 +1,8 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decorator.js';
 import { JobsService } from './jobs.service.js';
-import { IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { AdvanceDto, ArriveDto, ConfirmPaymentDto, CreateJobDto, QuoteRequestDto } from './dto/jobs.dto.js';
 
 class RatingDto {
@@ -12,6 +12,11 @@ class RatingDto {
 
 class ReturnDto {
   @IsOptional() @IsString() @Length(0, 300) returnUrl?: string;
+}
+
+class RiderLocationDto {
+  @IsOptional() @IsNumber() @Min(-90) @Max(90) lat?: number;
+  @IsOptional() @IsNumber() @Min(-180) @Max(180) lng?: number;
 }
 
 @Controller({ path: 'jobs', version: '1' })
@@ -46,13 +51,13 @@ export class JobsController {
   }
 
   // ---- Rider: discovery feed (declared before :id so "available" isn't read as an id) ----
-  // Optional rider lat/lng => proximity matching: only nearby jobs, nearest-first, with km + ETA.
-  @Get('available')
+  // POST (not GET) so the rider's location rides in the request BODY, never in a URL/query string
+  // that could be captured in access logs. Body is optional; without it the board is newest-first.
+  @Post('available')
   @RequirePermission('job:accept')
-  available(@Query('lat') lat?: string, @Query('lng') lng?: string) {
-    const la = Number(lat), ln = Number(lng);
-    const pos = Number.isFinite(la) && Number.isFinite(ln) && lat !== undefined && lng !== undefined
-      ? { lat: la, lng: ln } : undefined;
+  available(@Body() dto: RiderLocationDto) {
+    const pos = Number.isFinite(dto.lat) && Number.isFinite(dto.lng) && dto.lat !== undefined && dto.lng !== undefined
+      ? { lat: dto.lat, lng: dto.lng } : undefined;
     return this.jobs.availableJobs(pos);
   }
 

@@ -61,8 +61,12 @@ export const DOCUMENT_REPO = Symbol('DOCUMENT_REPO');
  * URLs to authenticated reviewers only. No object is ever public.
  */
 export interface DocumentStore {
-  /** A one-time upload URL + the key the object will live under. */
-  presignPut(key: string, contentType: string, ttlSeconds: number): Promise<{ uploadUrl: string; key: string }>;
+  /**
+   * A one-time upload URL + the key the object will live under. When `contentLength` is given it is
+   * baked into the signature, so the store rejects any upload whose body size differs — a hard,
+   * provider-enforced size cap (not just a client-side check).
+   */
+  presignPut(key: string, contentType: string, ttlSeconds: number, contentLength?: number): Promise<{ uploadUrl: string; key: string }>;
   /** A short-lived read URL for a stored object. */
   signedGetUrl(key: string, ttlSeconds: number): Promise<string>;
   remove(key: string): Promise<void>;
