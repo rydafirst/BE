@@ -255,8 +255,9 @@ export class DocumentsService {
   }
 
   /** Admin confirms the rider's legal name matches their Gov ID. */
-  setRiderNameVerified(riderId: string, verified: boolean): Promise<void> {
-    return this.repo.setNameVerified(riderId, verified);
+  async setRiderNameVerified(riderId: string, verified: boolean): Promise<{ ok: true }> {
+    await this.repo.setNameVerified(riderId, verified);
+    return { ok: true };
   }
 
   /** The rider details a customer sees once a rider is assigned to their job. */
