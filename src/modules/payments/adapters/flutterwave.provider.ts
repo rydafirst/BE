@@ -3,10 +3,24 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { ENV } from '../../../config/config.module.js';
 import type { Env } from '../../../config/env.validation.js';
 import { Money } from '../domain/money.js';
-import type { CollectionInit, PaymentProvider, VerifiedTxn } from '../payment-provider.interface.js';
+import type { Bank, CollectionInit, PaymentProvider, VerifiedTxn } from '../payment-provider.interface.js';
+import type { BankDirectory } from '../bank-directory.port.js';
 
 const TIMEOUT_MS = 12_000;
 const MAX_RETRIES = 2;
+
+/**
+ * A provider failure that is safe to return to the client (generic 503 message) while carrying the
+ * detailed provider reason in `providerReason` for logs/ops only. The detailed reason is NEVER put
+ * in the HttpException body, so it can't leak to the client through the global exception filter.
+ */
+export class PaymentProviderError extends ServiceUnavailableException {
+  readonly providerReason: string;
+  constructor(providerReason: string) {
+    super('Payment provider unavailable');
+    this.providerReason = providerReason;
+  }
+}
 
 /**
  * Flutterwave v3 adapter. Escrow model: collect into our balance (Standard checkout),
@@ -14,7 +28,7 @@ const MAX_RETRIES = 2;
  * transaction (refund). Fail-closed: any non-2xx / network error throws.
  */
 @Injectable()
-export class FlutterwaveProvider implements PaymentProvider {
+export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
   private readonly log = new Logger(FlutterwaveProvider.name);
   private readonly secret: string;
   private readonly webhookSecret: string;
@@ -68,9 +82,11 @@ export class FlutterwaveProvider implements PaymentProvider {
     return { providerRef: String(body?.data?.id ?? p.reference) };
   }
 
-  async refund(p: { transactionId: string; amount: Money }): Promise<{ providerRef: string }> {
+  async refund(p: { transactionId: string; amount: Money; reference?: string }): Promise<{ providerRef: string }> {
     const body = await this.call('POST', `/transactions/${encodeURIComponent(p.transactionId)}/refund`, {
       amount: p.amount.amount / 100,
+      // Included for providers/endpoints that honour an idempotency reference; harmless otherwise.
+      ...(p.reference ? { reference: p.reference } : {}),
     });
     return { providerRef: String(body?.data?.id ?? p.transactionId) };
   }
@@ -83,6 +99,22 @@ export class FlutterwaveProvider implements PaymentProvider {
     const name = body?.data?.account_name as string | undefined;
     if (!name) throw new ServiceUnavailableException('Could not resolve account name');
     return { accountName: name };
+  }
+
+  async listBanks(): Promise<Bank[]> {
+    const body = await this.call('GET', '/banks/NG');
+    const rows: unknown[] = Array.isArray(body?.data) ? body.data : [];
+    const banks = rows
+      .map((b) => {
+        const r = b as { code?: unknown; name?: unknown };
+        return { code: String(r.code ?? '').trim(), name: String(r.name ?? '').trim() };
+      })
+      .filter((b) => b.code.length > 0 && b.name.length > 0);
+    // De-dupe by code (Flutterwave occasionally repeats) and sort alphabetically for the picker.
+    const seen = new Set<string>();
+    const unique = banks.filter((b) => (seen.has(b.code) ? false : (seen.add(b.code), true)));
+    unique.sort((a, b) => a.name.localeCompare(b.name));
+    return unique;
   }
 
   verifyWebhookSignature(signatureHeader: string): boolean {
@@ -105,7 +137,12 @@ export class FlutterwaveProvider implements PaymentProvider {
           signal: ctrl.signal,
         });
         clearTimeout(timer);
-        if (!res.ok) throw new Error(`Flutterwave ${method} ${path} -> ${res.status}`);
+        if (!res.ok) {
+          // Capture the provider's own error reason (e.g. "insufficient balance", "invalid
+          // account") so ops can tell a provider-side failure from ours. Server-side only.
+          const detail = await this.extractError(res);
+          throw new Error(`Flutterwave ${method} ${path} -> ${res.status}: ${detail}`);
+        }
         return await res.json();
       } catch (e) {
         clearTimeout(timer);
@@ -114,7 +151,20 @@ export class FlutterwaveProvider implements PaymentProvider {
         if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, 200 * 2 ** attempt));
       }
     }
-    this.log.error(`Flutterwave call failed: ${String(lastErr)}`);
-    throw new ServiceUnavailableException('Payment provider unavailable');
+    const reason = lastErr instanceof Error ? lastErr.message : String(lastErr);
+    this.log.error(`Flutterwave call failed: ${reason}`);
+    // Client gets a generic 503; the detailed reason rides along in `providerReason` for logs/ops.
+    throw new PaymentProviderError(reason);
+  }
+
+  /** Best-effort read of the provider's JSON `{message}` for diagnostics; never throws. */
+  private async extractError(res: Response): Promise<string> {
+    try {
+      const body = (await res.json()) as { message?: unknown } | null;
+      const msg = body && typeof body === 'object' && typeof body.message === 'string' ? body.message : '';
+      return msg || `HTTP ${res.status}`;
+    } catch {
+      return `HTTP ${res.status}`;
+    }
   }
 }

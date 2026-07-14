@@ -65,6 +65,7 @@ export class AuthService {
       createdAtMs: Date.now(),
       attempts: 0,
       consumed: false,
+      ...(email ? { email } : {}), // carried to the account on verify, for payment receipts
     });
 
     if (this.env.OTP_CHANNEL === 'email' && email) {
@@ -107,7 +108,7 @@ export class AuthService {
     await this.otps.markConsumed(phone);
     // An allowlisted admin phone is provisioned as ADMIN with the full review scope set.
     const admin = isAdminPhone(this.env.ADMIN_PHONES, phone);
-    const user = await this.users.upsertByPhone(phone, admin ? 'ADMIN' : role);
+    const user = await this.users.upsertByPhone(phone, admin ? 'ADMIN' : role, record.email);
     return this.issueTokens(user.id, user.role, admin ? ALL_ADMIN_SCOPES : undefined);
   }
 

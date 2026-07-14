@@ -16,6 +16,7 @@ export interface OtpRecord {
   createdAtMs: number;
   attempts: number;
   consumed: boolean;
+  email?: string;        // captured at request time so it can be saved to the account on verify
 }
 
 export type OtpCheck =

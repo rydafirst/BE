@@ -21,6 +21,17 @@ test('after hold + release, escrow nets to zero and rider is owed everything', (
   assert.equal(deriveBalance(all, 'RIDER_PAYABLE').amount, 2300);
 });
 
+test('release with a platform fee credits PLATFORM_FEE and pays the rider the remainder', () => {
+  const s = computeSettlement({ collected, outcome: 'RELEASE_FULL', platformFee: Money.of(300) });
+  const settle = buildSettlementPosting('j1', s);
+  assert.doesNotThrow(() => assertBalanced(settle));
+  const all = [...buildHoldPosting('j1', collected), ...settle];
+  assert.equal(deriveBalance(all, 'ESCROW').amount, 0);
+  assert.equal(deriveBalance(all, 'RIDER_PAYABLE').amount, 2000);
+  assert.equal(deriveBalance(all, 'PLATFORM_FEE').amount, 300);
+  assert.equal(deriveBalance(all, 'CUSTOMER_REFUND').amount, 0);
+});
+
 test('failed-attempt splits escrow into rider payable + customer refund, balanced, escrow nets zero', () => {
   const s = computeSettlement({ collected, outcome: 'FAILED_ATTEMPT', attemptFee: Money.of(800) });
   const settle = buildSettlementPosting('j1', s);

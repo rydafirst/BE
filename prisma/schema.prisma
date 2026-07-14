@@ -148,6 +148,10 @@ model Job {
   amountMinor     Int
   currency        String    @default("NGN")
   refundAccountId String
+  platformFeeMinor Int?     // the platform's cut of this fare (kobo); split out on release
+  payoutPending   Boolean  @default(false) // rider transfer couldn't complete; awaiting retry
+  payoutError     String?  // last provider reason for a failed payout (ops diagnosis)
+  payoutRef       String?  // provider reference of the completed payout
   pickupLat       Float
   pickupLng       Float
   dropoffLat      Float
@@ -164,6 +168,12 @@ model Job {
   flwTxRef        String?   @unique
   flwTxId         String?
   arrivedAt       DateTime?
+  waitStartedAt   DateTime?
+  returnOfJobId   String?
+  waitingTxRef    String?
+  waitingTxId     String?
+  waitingFeeMinor Int?
+  returnReserveMinor Int?
   createdAt       DateTime  @default(now())
 
   events          JobEvent[]
@@ -171,10 +181,23 @@ model Job {
   disputes        Dispute[]
   ledgerEntries   LedgerEntry[]
   escrowTxns      EscrowTransaction[]
+  messages        ChatMessage[]
 
   @@index([status])
   @@index([customerId])
   @@index([riderId])
+}
+
+// Rider <-> customer chat, scoped to a single job.
+model ChatMessage {
+  id        String   @id @default(uuid())
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  senderId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([jobId])
 }
 
 // Append-only job timeline (evidence + audit).

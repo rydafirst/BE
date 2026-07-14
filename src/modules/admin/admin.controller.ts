@@ -53,6 +53,18 @@ export class AdminController {
     return this.ops.finance();
   }
 
+  @Get('finance/payouts/pending')
+  @RequirePermission('admin:finance:read')
+  pendingPayouts() {
+    return this.ops.pendingPayouts();
+  }
+
+  @Post('finance/payouts/:jobId/retry')
+  @RequirePermission('admin:finance:manage')
+  retryPayout(@Param('jobId') jobId: string) {
+    return this.ops.retryPayout(jobId);
+  }
+
   @Get('kyc/pending')
   @RequirePermission('admin:kyc:review')
   pendingKyc() {

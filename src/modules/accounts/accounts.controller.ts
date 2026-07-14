@@ -28,6 +28,13 @@ export class AccountsController {
     return this.accounts.getMasked(user.id);
   }
 
+  // Bank list for the picker so users choose a name instead of typing a code.
+  @Get('banks')
+  @RequirePermission('account:manage:own')
+  banks() {
+    return this.accounts.listBanks();
+  }
+
   // Preview the resolved account name before saving (so the user can confirm it's their account).
   @Post('resolve')
   @RequirePermission('account:manage:own')

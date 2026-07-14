@@ -53,17 +53,21 @@ export class PrismaRefreshRepo implements RefreshTokenRepository {
 @Injectable()
 export class PrismaUserRepo implements UserRepository {
   constructor(private readonly db: PrismaService) {}
-  async upsertByPhone(phone: string, role: Role): Promise<{ id: string; role: Role }> {
+  async upsertByPhone(phone: string, role: Role, email?: string): Promise<{ id: string; role: Role }> {
     const existing = await this.db.user.findUnique({ where: { phone } });
     if (!existing) {
-      const created = await this.db.user.create({ data: { phone, role } });
+      const created = await this.db.user.create({ data: { phone, role, ...(email ? { email } : {}) } as never });
       return { id: created.id, role: created.role as Role };
     }
     // Follow the role the user is signing in as (a phone can be a customer today, a rider tomorrow),
-    // but never downgrade an admin through OTP login.
+    // but never downgrade an admin through OTP login. Keep the latest email on file for receipts.
     const nextRole: Role = existing.role === 'ADMIN' ? (existing.role as Role) : role;
-    if (existing.role === nextRole) return { id: existing.id, role: existing.role as Role };
-    const updated = await this.db.user.update({ where: { phone }, data: { role: nextRole } });
+    const data = { role: nextRole, ...(email ? { email } : {}) };
+    const updated = await this.db.user.update({ where: { phone }, data: data as never });
     return { id: updated.id, role: updated.role as Role };
+  }
+  async getEmail(userId: string): Promise<string | null> {
+    const u = await this.db.user.findUnique({ where: { id: userId } });
+    return u ? ((u as { email?: string | null }).email ?? null) : null;
   }
 }

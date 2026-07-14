@@ -16,6 +16,8 @@ export type JobStatus =
   | 'EN_ROUTE_DROP'
   | 'ARRIVED'
   | 'AWAITING_CODE'      // delivery: awaiting receiver code
+  | 'WAITING'            // rider started the wait timer (10-min free grace, then metered)
+  | 'AWAITING_RESOLUTION'// grace expired, no collection: sender must choose keep-waiting or return
   | 'COMPLETED'
   | 'RELEASED'
   | 'CANCELLED'
@@ -33,8 +35,13 @@ const TRANSITIONS: Readonly<Record<JobStatus, readonly JobStatus[]>> = {
   AT_PICKUP: ['IN_PROGRESS', 'CANCELLED', 'SEARCHING'],
   IN_PROGRESS: ['EN_ROUTE_DROP', 'DISPUTED'],
   EN_ROUTE_DROP: ['ARRIVED', 'DISPUTED'],
-  ARRIVED: ['AWAITING_CODE', 'COMPLETED', 'FAILED_ATTEMPT', 'DISPUTED'],
-  AWAITING_CODE: ['COMPLETED', 'FAILED_ATTEMPT', 'DISPUTED'],
+  ARRIVED: ['AWAITING_CODE', 'COMPLETED', 'WAITING', 'FAILED_ATTEMPT', 'DISPUTED'],
+  AWAITING_CODE: ['COMPLETED', 'WAITING', 'FAILED_ATTEMPT', 'DISPUTED'],
+  // Rider waited out the free grace with no collection; sender decides what happens next.
+  WAITING: ['COMPLETED', 'AWAITING_RESOLUTION', 'DISPUTED'],
+  // Sender: keep waiting (now metered) -> WAITING; recipient shows -> COMPLETED; or initiate a
+  // return, which completes the outbound (rider paid in full) and spawns a separate paid return job.
+  AWAITING_RESOLUTION: ['WAITING', 'COMPLETED', 'DISPUTED'],
   COMPLETED: ['RELEASED', 'DISPUTED'],
   RELEASED: [],
   CANCELLED: [],
@@ -48,6 +55,11 @@ export function canTransition(from: JobStatus, to: JobStatus): boolean {
 }
 
 export class IllegalTransitionError extends Error {
+  /** A conflicting state change is a client error (409), not a server fault (500). */
+  readonly httpStatus = 409;
+  /** Safe to surface to the client — carries no internals. */
+  readonly expose = true;
+  readonly clientMessage = 'This action is no longer available for this delivery.';
   constructor(from: JobStatus, to: JobStatus) {
     super(`Illegal job transition: ${from} -> ${to}`);
     this.name = 'IllegalTransitionError';

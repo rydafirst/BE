@@ -26,6 +26,7 @@ export class CreateJobDto {
   @IsOptional() @ValidateNested() @Type(() => RecipientDto) recipient?: RecipientDto;
   @IsOptional() @IsIn(['WAIT', 'DELEGATE', 'RETURN']) fallbackPolicy?: 'WAIT' | 'DELEGATE' | 'RETURN';
   @IsOptional() @IsString() @Length(1, 200) item?: string;         // what is being sent
+  @IsOptional() @IsNumber() @Min(0) @Max(200) weightKg?: number;   // approx weight, for rider clarity
   @IsOptional() @IsString() @Length(1, 500) instructions?: string; // notes for the rider
   @IsOptional() @IsString() @Length(1, 300) pickupAddress?: string;  // full human-readable label
   @IsOptional() @IsString() @Length(1, 300) dropoffAddress?: string;

@@ -10,6 +10,8 @@ import {
 import { PrismaOtpRepo, PrismaRefreshRepo, PrismaUserRepo } from './adapters/prisma.adapters.js';
 import { RedisRateLimiter } from './adapters/redis-rate-limiter.js';
 import { TermiiOtpSender } from './adapters/termii-otp-sender.js';
+import { UserCustomerEmail } from './adapters/user-customer-email.js';
+import { CUSTOMER_EMAIL } from '../jobs/customer-email.port.js';
 import { ENV } from '../../config/config.module.js';
 import type { Env } from '../../config/env.validation.js';
 
@@ -32,6 +34,9 @@ const usePg = process.env.DB_DRIVER === 'postgres';
       useFactory: (env: Env) => (env.OTP_CHANNEL === 'sms' ? new TermiiOtpSender(env) : new DevOtpSender()),
       inject: [ENV],
     },
+    // Customer email lookup for payment receipts, shared with the jobs module.
+    { provide: CUSTOMER_EMAIL, useClass: UserCustomerEmail },
   ],
+  exports: [CUSTOMER_EMAIL],
 })
 export class AuthModule {}

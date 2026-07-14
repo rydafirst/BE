@@ -6,11 +6,12 @@ import { InMemoryPresenceStore } from './adapters/in-memory-presence.store.js';
 import { RedisPresenceStore } from './adapters/redis-presence.store.js';
 import { DocumentsModule } from '../documents/documents.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
+import { AccountsModule } from '../accounts/accounts.module.js';
 
 const usePg = process.env.DB_DRIVER === 'postgres';
 
 @Module({
-  imports: [DocumentsModule, SettingsModule],
+  imports: [DocumentsModule, SettingsModule, AccountsModule],
   controllers: [PresenceController],
   providers: [
     PresenceService,

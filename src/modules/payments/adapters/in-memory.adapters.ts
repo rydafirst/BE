@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { LedgerEntry } from '../domain/ledger.js';
 import type { IdempotencyRecord } from '../domain/idempotency.js';
-import type { LedgerRepository, IdempotencyStore, WebhookInboxStore } from '../ports.js';
+import { IDEMPOTENCY_PENDING, type LedgerRepository, type IdempotencyStore, type WebhookInboxStore } from '../ports.js';
 import { Money } from '../domain/money.js';
 import { deriveBalance } from '../domain/ledger.js';
 import type { EscrowTotals } from '../domain/reconciliation.js';
@@ -19,6 +19,11 @@ export class InMemoryLedgerRepo implements LedgerRepository {
     const set = new Set(jobIds);
     return this.entries
       .filter((e) => e.account === account && e.direction === 'CREDIT' && set.has(e.jobId))
+      .reduce((sum, e) => sum + e.amount.amount, 0);
+  }
+  async sumCredit(account: string): Promise<number> {
+    return this.entries
+      .filter((e) => e.account === account && e.direction === 'CREDIT')
       .reduce((sum, e) => sum + e.amount.amount, 0);
   }
   async totals(): Promise<EscrowTotals> {
@@ -39,6 +44,15 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
   }
   async put<T>(key: string, result: T): Promise<void> {
     if (!this.m.has(key)) this.m.set(key, result); // first write wins
+  }
+  async claim(key: string): Promise<boolean> {
+    // Atomic in a single-threaded event loop: check-and-set with no await in between.
+    if (this.m.has(key)) return false;
+    this.m.set(key, IDEMPOTENCY_PENDING);
+    return true;
+  }
+  async complete<T>(key: string, result: T): Promise<void> {
+    this.m.set(key, result); // overwrite the pending reservation with the final result
   }
 }
 

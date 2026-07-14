@@ -29,6 +29,13 @@ export class PrismaLedgerRepository implements LedgerRepository {
     });
     return r._sum.amount ?? 0;
   }
+  async sumCredit(account: string): Promise<number> {
+    const r = await this.db.ledgerEntry.aggregate({
+      _sum: { amount: true },
+      where: { account: account as never, direction: 'CREDIT' },
+    });
+    return r._sum.amount ?? 0;
+  }
 
   /** Derived totals (credits) straight from the append-only rows. */
   async totals(): Promise<EscrowTotals> {

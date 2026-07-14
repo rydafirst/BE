@@ -33,4 +33,19 @@ export class AdminOpsService {
     const [totals, reconciliation] = await Promise.all([this.escrow.escrowTotals(), this.escrow.reconciliationView()]);
     return { totals, reconciliation };
   }
+
+  /** Stranded payouts awaiting retry — the ledger already released; only the transfer failed. */
+  async pendingPayouts(): Promise<Array<{ id: string; status: string; amountMinor: number; payoutError?: string; riderId?: string; createdAt: string }>> {
+    const jobs = await this.jobs.listPendingPayouts(100);
+    return jobs.map((j) => ({
+      id: j.id, status: j.status, amountMinor: j.amountMinor, createdAt: j.createdAt,
+      ...(j.payoutError ? { payoutError: j.payoutError } : {}),
+      ...(j.riderId ? { riderId: j.riderId } : {}),
+    }));
+  }
+
+  /** Re-attempt a single stranded payout (idempotent at the PSP; can never double-pay). */
+  retryPayout(jobId: string): Promise<{ payoutPending: boolean; payoutError?: string }> {
+    return this.jobs.retryPayout(jobId);
+  }
 }

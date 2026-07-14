@@ -42,13 +42,19 @@ export class InMemoryRefreshRepo implements RefreshTokenRepository {
 
 @Injectable()
 export class InMemoryUserRepo implements UserRepository {
-  private byPhone = new Map<string, { id: string; role: Role }>();
-  async upsertByPhone(phone: string, role: Role): Promise<{ id: string; role: Role }> {
+  private byPhone = new Map<string, { id: string; role: Role; email?: string }>();
+  private byId = new Map<string, { id: string; role: Role; email?: string }>();
+  async upsertByPhone(phone: string, role: Role, email?: string): Promise<{ id: string; role: Role }> {
     let u = this.byPhone.get(phone);
-    if (!u) { u = { id: randomUUID(), role }; this.byPhone.set(phone, u); return u; }
+    if (!u) { u = { id: randomUUID(), role, ...(email ? { email } : {}) }; this.byPhone.set(phone, u); this.byId.set(u.id, u); return { id: u.id, role: u.role }; }
     // Follow the signed-in role (customer today, rider tomorrow); never downgrade an admin.
     if (u.role !== 'ADMIN') u.role = role;
-    return u;
+    if (email) u.email = email; // keep the latest email on file
+    this.byId.set(u.id, u);
+    return { id: u.id, role: u.role };
+  }
+  async getEmail(userId: string): Promise<string | null> {
+    return this.byId.get(userId)?.email ?? null;
   }
 }
 

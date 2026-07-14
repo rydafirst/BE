@@ -19,7 +19,9 @@ export interface RefreshTokenRepository {
 export const REFRESH_REPO = Symbol('REFRESH_REPO');
 
 export interface UserRepository {
-  upsertByPhone(phone: string, role: Role): Promise<{ id: string; role: Role }>;
+  upsertByPhone(phone: string, role: Role, email?: string): Promise<{ id: string; role: Role }>;
+  /** The user's email on file (for payment receipts / mail trail), or null. */
+  getEmail(userId: string): Promise<string | null>;
 }
 export const USER_REPO = Symbol('USER_REPO');
 

@@ -38,6 +38,21 @@ test('REFUND is only possible from CANCELLED / FAILED_ATTEMPT / DISPUTE_RESOLVED
   }
 });
 
+test('waiting + resolution path is legal; recipient-absence never auto-refunds', () => {
+  // Rider starts waiting, grace expires, sender is asked to resolve.
+  assert.ok(canTransition('ARRIVED', 'WAITING'));
+  assert.ok(canTransition('WAITING', 'AWAITING_RESOLUTION'));
+  // Sender keeps waiting (metered) or the recipient finally collects.
+  assert.ok(canTransition('AWAITING_RESOLUTION', 'WAITING'));
+  assert.ok(canTransition('WAITING', 'COMPLETED'));
+  // Initiating a return completes the outbound (rider paid in full) — it does not refund.
+  assert.ok(canTransition('AWAITING_RESOLUTION', 'COMPLETED'));
+  assert.equal(canRefund('WAITING'), false);
+  assert.equal(canRefund('AWAITING_RESOLUTION'), false);
+  // A stalled resolution can still escalate to a dispute.
+  assert.ok(canTransition('AWAITING_RESOLUTION', 'DISPUTED'));
+});
+
 test('terminal states have no outgoing transitions', () => {
   for (const s of ['RELEASED', 'CANCELLED', 'DISPUTE_RESOLVED'] as const) {
     assert.ok(isTerminal(s));

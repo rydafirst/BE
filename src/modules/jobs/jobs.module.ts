@@ -17,11 +17,12 @@ import { PrismaJobRepository } from './adapters/prisma-job.repo.js';
 import { RATE_LIMITER } from '../auth/ports.js';
 import { InMemoryRateLimiter } from '../auth/adapters/in-memory.adapters.js';
 import { RedisRateLimiter } from '../auth/adapters/redis-rate-limiter.js';
+import { AuthModule } from '../auth/auth.module.js';
 
 const usePg = process.env.DB_DRIVER === 'postgres';
 
 @Module({
-  imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule, DocumentsModule, RatingsModule, SettingsModule],
+  imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule, DocumentsModule, RatingsModule, SettingsModule, AuthModule],
   controllers: [JobsController, WebhooksController],
   providers: [
     JobsService,

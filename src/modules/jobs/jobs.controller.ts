@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decorator.js';
 import { JobsService } from './jobs.service.js';
@@ -8,6 +8,10 @@ import { AdvanceDto, ArriveDto, ConfirmPaymentDto, CreateJobDto, QuoteRequestDto
 class RatingDto {
   @IsInt() @Min(1) @Max(5) stars!: number;
   @IsOptional() @IsString() @Length(0, 500) comment?: string;
+}
+
+class ReturnDto {
+  @IsOptional() @IsString() @Length(0, 300) returnUrl?: string;
 }
 
 @Controller({ path: 'jobs', version: '1' })
@@ -42,10 +46,14 @@ export class JobsController {
   }
 
   // ---- Rider: discovery feed (declared before :id so "available" isn't read as an id) ----
+  // Optional rider lat/lng => proximity matching: only nearby jobs, nearest-first, with km + ETA.
   @Get('available')
   @RequirePermission('job:accept')
-  available() {
-    return this.jobs.availableJobs();
+  available(@Query('lat') lat?: string, @Query('lng') lng?: string) {
+    const la = Number(lat), ln = Number(lng);
+    const pos = Number.isFinite(la) && Number.isFinite(ln) && lat !== undefined && lng !== undefined
+      ? { lat: la, lng: ln } : undefined;
+    return this.jobs.availableJobs(pos);
   }
 
   // ---- Rider: jobs assigned to me (so an active trip is resumable from any device) ----
@@ -114,6 +122,50 @@ export class JobsController {
   @RequirePermission('job:accept')
   failedAttempt(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.jobs.failedAttempt(user.id, id);
+  }
+
+  // ---- Rider: recipient unavailable — start the free 10-min wait, then escalate for resolution ----
+  @Post(':id/start-waiting')
+  @RequirePermission('job:accept')
+  startWaiting(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.startWaiting(user.id, id);
+  }
+
+  @Post(':id/escalate')
+  @RequirePermission('job:accept')
+  escalate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.escalateResolution(user.id, id);
+  }
+
+  @Post(':id/charge-waiting')
+  @RequirePermission('job:accept')
+  chargeWaiting(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.chargeWaiting(user.id, id);
+  }
+
+  @Post(':id/confirm-waiting-payment')
+  @RequirePermission('job:read:own')
+  confirmWaitingPayment(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ConfirmPaymentDto) {
+    return this.jobs.confirmWaitingPayment(user.id, id, dto.transactionId);
+  }
+
+  // ---- Customer: resolve a stalled delivery (keep the rider waiting, or return to sender) ----
+  @Post(':id/keep-waiting')
+  @RequirePermission('job:read:own')
+  keepWaiting(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.keepWaiting(user.id, id);
+  }
+
+  @Post(':id/pay-waiting')
+  @RequirePermission('job:read:own')
+  payWaiting(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.payWaiting(user.id, id);
+  }
+
+  @Post(':id/return')
+  @RequirePermission('job:read:own')
+  initiateReturn(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ReturnDto) {
+    return this.jobs.initiateReturn(user.id, id, dto.returnUrl);
   }
 
   // ---- Rider: hand an accepted job back to the pool (before pickup only) ----

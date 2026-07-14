@@ -35,7 +35,11 @@ export class ConfirmationService {
       if (res.reason === 'mismatch') await this.codes.incrementAttempts(jobId, 'DELIVERY');
       throw new UnauthorizedException('Invalid code');
     }
+    // Complete FIRST (durable release + best-effort payout), then burn the code. completeDelivery
+    // never throws on a payout failure, so the code is only consumed once the delivery truly
+    // completed — a transient DB error leaves the code valid to retry instead of stranding the trip.
+    const result = await this.jobs.completeDelivery(riderId, jobId);
     await this.codes.markConsumed(jobId, 'DELIVERY');
-    return this.jobs.completeDelivery(riderId, jobId);
+    return result;
   }
 }
