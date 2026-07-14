@@ -7,6 +7,7 @@ export interface Job {
   type: JobType;
   status: JobStatus;
   customerId: string;
+  customerName?: string;       // sender's name, shown to the assigned rider
   amountMinor: number;         // total the customer paid (incl. platform fee)
   platformFeeMinor?: number;   // the platform's cut, split out to platform revenue on release
   currency: 'NGN';

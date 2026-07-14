@@ -20,7 +20,7 @@ export class PrismaJobRepository implements JobRepository {
       pickupAddress: job.pickupAddress ?? null, dropoffAddress: job.dropoffAddress ?? null,
       pickupArea: job.pickupArea ?? null, dropoffArea: job.dropoffArea ?? null,
       recipientName: job.recipient?.name ?? null, recipientPhone: job.recipient?.phone ?? null,
-      item: job.item ?? null, instructions: job.instructions ?? null,
+      item: job.item ?? null, weightGrams: job.weightGrams ?? null, customerName: job.customerName ?? null, instructions: job.instructions ?? null,
       fallbackPolicy: job.fallbackPolicy ?? null,
       flwTxRef: job.flwTxRef ?? null,
       flwTxId: job.flwTxId ?? null,
@@ -42,10 +42,11 @@ export class PrismaJobRepository implements JobRepository {
       payoutError: string | null; payoutRef: string | null;
       waitStartedAt: Date | null; returnOfJobId: string | null;
       waitingTxRef: string | null; waitingTxId: string | null; waitingFeeMinor: number | null;
-      returnReserveMinor: number | null;
+      returnReserveMinor: number | null; weightGrams: number | null; customerName: string | null;
     };
     return {
       id: r.id, type: r.type, status: r.status as JobStatus, customerId: r.customerId,
+      ...(x.customerName ? { customerName: x.customerName } : {}),
       ...(r.riderId ? { riderId: r.riderId } : {}),
       amountMinor: r.amountMinor, currency: 'NGN', refundAccountId: r.refundAccountId,
       ...(x.platformFeeMinor != null ? { platformFeeMinor: x.platformFeeMinor } : {}),
@@ -59,6 +60,7 @@ export class PrismaJobRepository implements JobRepository {
       ...(r.dropoffArea ? { dropoffArea: r.dropoffArea } : {}),
       ...(r.recipientName && r.recipientPhone ? { recipient: { name: r.recipientName, phone: r.recipientPhone } } : {}),
       ...(r.item ? { item: r.item } : {}),
+      ...(x.weightGrams != null ? { weightGrams: x.weightGrams } : {}),
       ...(r.instructions ? { instructions: r.instructions } : {}),
       ...(r.fallbackPolicy ? { fallbackPolicy: r.fallbackPolicy as Job['fallbackPolicy'] } : {}),
       ...(r.flwTxRef ? { flwTxRef: r.flwTxRef } : {}),

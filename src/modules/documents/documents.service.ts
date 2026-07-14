@@ -262,15 +262,25 @@ export class DocumentsService {
 
   /** The rider details a customer sees once a rider is assigned to their job. */
   async riderSummaryFor(riderId: string): Promise<{
-    name?: string; nameVerified: boolean; vehicleType: VehicleTrack | null; vehiclePlate?: string; vehicleColor?: string;
+    name?: string; nameVerified: boolean; vehicleType: VehicleTrack | null; vehiclePlate?: string; vehicleColor?: string; photoUrl?: string;
   }> {
     const p = await this.repo.getProfile(riderId);
+    const photoUrl = await this.profilePhotoUrl(riderId);
     return {
       nameVerified: p.nameVerified,
       vehicleType: p.track,
       ...(p.legalName ? { name: p.legalName } : {}),
       ...(p.vehiclePlate ? { vehiclePlate: p.vehiclePlate } : {}),
       ...(p.vehicleColor ? { vehicleColor: p.vehicleColor } : {}),
+      ...(photoUrl ? { photoUrl } : {}),
     };
+  }
+
+  /** Short-lived signed URL for a rider's latest profile photo (shown to the customer). Null if none. */
+  async profilePhotoUrl(riderId: string): Promise<string | null> {
+    const photos = (await this.repo.listByRider(riderId)).filter((d) => d.type === 'PROFILE_PHOTO');
+    if (photos.length === 0) return null;
+    const latest = photos.reduce((a, b) => (b.version > a.version ? b : a));
+    return this.store.signedGetUrl(latest.fileKey, VIEW_URL_TTL_SECONDS);
   }
 }

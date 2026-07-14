@@ -42,8 +42,8 @@ export class InMemoryRefreshRepo implements RefreshTokenRepository {
 
 @Injectable()
 export class InMemoryUserRepo implements UserRepository {
-  private byPhone = new Map<string, { id: string; role: Role; email?: string }>();
-  private byId = new Map<string, { id: string; role: Role; email?: string }>();
+  private byPhone = new Map<string, { id: string; role: Role; email?: string; photoKey?: string }>();
+  private byId = new Map<string, { id: string; role: Role; email?: string; photoKey?: string }>();
   async upsertByPhone(phone: string, role: Role, email?: string): Promise<{ id: string; role: Role }> {
     let u = this.byPhone.get(phone);
     if (!u) { u = { id: randomUUID(), role, ...(email ? { email } : {}) }; this.byPhone.set(phone, u); this.byId.set(u.id, u); return { id: u.id, role: u.role }; }
@@ -55,6 +55,12 @@ export class InMemoryUserRepo implements UserRepository {
   }
   async getEmail(userId: string): Promise<string | null> {
     return this.byId.get(userId)?.email ?? null;
+  }
+  async getPhotoKey(userId: string): Promise<string | null> {
+    return this.byId.get(userId)?.photoKey ?? null;
+  }
+  async setPhotoKey(userId: string, key: string): Promise<void> {
+    const u = this.byId.get(userId); if (u) u.photoKey = key;
   }
 }
 

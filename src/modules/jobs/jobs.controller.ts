@@ -93,6 +93,12 @@ export class JobsController {
     return this.jobs.cancel(user.id, id);
   }
 
+  @Post(':id/coming')
+  @RequirePermission('job:read:own')
+  notifyComing(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.notifyRiderComing(user.id, id);
+  }
+
   // ---- Rider ----
   @Post(':id/accept')
   @RequirePermission('job:accept')

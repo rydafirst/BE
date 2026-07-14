@@ -140,6 +140,7 @@ export class JobsService {
 
     const job: Job = {
       id: randomUUID(), type: v.payload.type, status: 'CREATED', customerId,
+      ...(dto.customerName ? { customerName: dto.customerName } : {}),
       // Refunds default to the original payment source; 'source' is the sentinel for that.
       amountMinor: chargeMinor, platformFeeMinor: fare.platformFeeMinor,
       ...(returnReserveMinor > 0 ? { returnReserveMinor } : {}),
@@ -151,6 +152,7 @@ export class JobsService {
       ...(dto.dropoffArea ? { dropoffArea: dto.dropoffArea } : {}),
       ...(dto.recipient ? { recipient: dto.recipient } : {}),
       ...(dto.item ? { item: dto.item } : {}),
+      ...(dto.weightKg != null ? { weightGrams: Math.round(dto.weightKg * 1000) } : {}),
       ...(dto.instructions ? { instructions: dto.instructions } : {}),
       ...(dto.fallbackPolicy ? { fallbackPolicy: dto.fallbackPolicy } : {}),
       createdAt: new Date().toISOString(),
@@ -732,6 +734,20 @@ export class JobsService {
 
   /** Jobs whose rider payout still needs a retry (admin finance queue). */
   async listPendingPayouts(limit = 100): Promise<Job[]> { return this.jobs.listPayoutPending(limit); }
+
+  /** Customer taps "I'm coming" — nudge the assigned rider that they're on their way to meet them. */
+  async notifyRiderComing(actorId: string, jobId: string): Promise<{ ok: boolean }> {
+    const job = await this.mustFind(jobId);
+    if (job.customerId !== actorId) throw new ForbiddenException();
+    if (!job.riderId) throw new ConflictException('No rider is assigned yet');
+    // Light rate-limit so the button can't be used to spam the rider.
+    const within = await this.limiter.hit(`coming:${jobId}`, 5, 300);
+    if (!within) throw new ConflictException('Please wait a moment before notifying your rider again');
+    await this.notify.record(job.riderId, {
+      title: 'Customer is on the way', body: 'Your customer says they’re coming to meet you.', jobId, urgent: true,
+    });
+    return { ok: true };
+  }
 
   async listActiveJobs(): Promise<Job[]> { return this.jobs.listActive(); }
   async listRecentJobs(limit = 100): Promise<Job[]> { return this.jobs.listRecent(limit); }

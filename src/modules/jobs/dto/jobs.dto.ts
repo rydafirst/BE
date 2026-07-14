@@ -23,6 +23,7 @@ export class CreateJobDto {
   @IsString() @Length(16, 1024) quoteToken!: string;
   // Optional: refunds default to the original payment source; this is only a saved fallback ref.
   @IsOptional() @IsString() @Length(1, 64) refundAccountId?: string;
+  @IsOptional() @IsString() @Length(1, 80) customerName?: string;  // sender's name (shown to the rider)
   @IsOptional() @ValidateNested() @Type(() => RecipientDto) recipient?: RecipientDto;
   @IsOptional() @IsIn(['WAIT', 'DELEGATE', 'RETURN']) fallbackPolicy?: 'WAIT' | 'DELEGATE' | 'RETURN';
   @IsOptional() @IsString() @Length(1, 200) item?: string;         // what is being sent
