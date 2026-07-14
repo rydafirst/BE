@@ -75,6 +75,12 @@ export class JobsController {
     return this.jobs.assignedRiderSummary(user.id, id);
   }
 
+  @Get(':id/customer')
+  @RequirePermission('job:accept')
+  customerSummary(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.assignedCustomerSummary(user.id, id);
+  }
+
   @Post(':id/rating')
   @RequirePermission('job:read:own')
   rate(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: RatingDto) {

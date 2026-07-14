@@ -36,6 +36,7 @@ import type { Rating } from '../ratings/ports.js';
 import { ridersToAnnounce } from './domain/broadcast.js';
 import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
 import { CUSTOMER_EMAIL, type CustomerEmailSource } from './customer-email.port.js';
+import { CUSTOMER_PHOTO, type CustomerPhotoSource } from './customer-photo.port.js';
 import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
 
 const QUOTE_TTL_MS = 900_000; // 15 minutes — long enough to read options + pay without the quote going stale
@@ -67,7 +68,16 @@ export class JobsService {
     private readonly settings: SettingsService,
     @Inject(RIDER_ACCOUNT_STATUS) private readonly riderAccount: RiderAccountStatus,
     @Inject(CUSTOMER_EMAIL) private readonly customerEmail: CustomerEmailSource,
+    @Inject(CUSTOMER_PHOTO) private readonly customerPhoto: CustomerPhotoSource,
   ) {}
+
+  /** The customer's name + photo for the assigned rider (party-only, after they're on the job). */
+  async assignedCustomerSummary(riderId: string, jobId: string): Promise<{ name?: string; photoUrl?: string }> {
+    const job = await this.mustFind(jobId);
+    if (job.riderId !== riderId) throw new ForbiddenException();
+    const photoUrl = await this.customerPhoto.photoUrl(job.customerId);
+    return { ...(job.customerName ? { name: job.customerName } : {}), ...(photoUrl ? { photoUrl } : {}) };
+  }
 
   /**
    * The email used on the customer's Flutterwave collection — their real address when we have it

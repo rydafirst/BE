@@ -18,11 +18,12 @@ import { RATE_LIMITER } from '../auth/ports.js';
 import { InMemoryRateLimiter } from '../auth/adapters/in-memory.adapters.js';
 import { RedisRateLimiter } from '../auth/adapters/redis-rate-limiter.js';
 import { AuthModule } from '../auth/auth.module.js';
+import { ProfileModule } from '../profile/profile.module.js';
 
 const usePg = process.env.DB_DRIVER === 'postgres';
 
 @Module({
-  imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule, DocumentsModule, RatingsModule, SettingsModule, AuthModule],
+  imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule, DocumentsModule, RatingsModule, SettingsModule, AuthModule, ProfileModule],
   controllers: [JobsController, WebhooksController],
   providers: [
     JobsService,

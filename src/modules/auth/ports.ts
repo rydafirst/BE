@@ -22,6 +22,8 @@ export interface UserRepository {
   upsertByPhone(phone: string, role: Role, email?: string): Promise<{ id: string; role: Role }>;
   /** The user's email on file (for payment receipts / mail trail), or null. */
   getEmail(userId: string): Promise<string | null>;
+  /** The user's phone number (their own — shown on their profile), or null. */
+  getPhone(userId: string): Promise<string | null>;
   /** The user's avatar object key, or null. */
   getPhotoKey(userId: string): Promise<string | null>;
   /** Persist the user's avatar object key after an upload. */

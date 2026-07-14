@@ -42,11 +42,11 @@ export class InMemoryRefreshRepo implements RefreshTokenRepository {
 
 @Injectable()
 export class InMemoryUserRepo implements UserRepository {
-  private byPhone = new Map<string, { id: string; role: Role; email?: string; photoKey?: string }>();
-  private byId = new Map<string, { id: string; role: Role; email?: string; photoKey?: string }>();
+  private byPhone = new Map<string, { id: string; role: Role; phone: string; email?: string; photoKey?: string }>();
+  private byId = new Map<string, { id: string; role: Role; phone: string; email?: string; photoKey?: string }>();
   async upsertByPhone(phone: string, role: Role, email?: string): Promise<{ id: string; role: Role }> {
     let u = this.byPhone.get(phone);
-    if (!u) { u = { id: randomUUID(), role, ...(email ? { email } : {}) }; this.byPhone.set(phone, u); this.byId.set(u.id, u); return { id: u.id, role: u.role }; }
+    if (!u) { u = { id: randomUUID(), role, phone, ...(email ? { email } : {}) }; this.byPhone.set(phone, u); this.byId.set(u.id, u); return { id: u.id, role: u.role }; }
     // Follow the signed-in role (customer today, rider tomorrow); never downgrade an admin.
     if (u.role !== 'ADMIN') u.role = role;
     if (email) u.email = email; // keep the latest email on file
@@ -55,6 +55,9 @@ export class InMemoryUserRepo implements UserRepository {
   }
   async getEmail(userId: string): Promise<string | null> {
     return this.byId.get(userId)?.email ?? null;
+  }
+  async getPhone(userId: string): Promise<string | null> {
+    return this.byId.get(userId)?.phone ?? null;
   }
   async getPhotoKey(userId: string): Promise<string | null> {
     return this.byId.get(userId)?.photoKey ?? null;

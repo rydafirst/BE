@@ -37,6 +37,6 @@ const usePg = process.env.DB_DRIVER === 'postgres';
     // Customer email lookup for payment receipts, shared with the jobs module.
     { provide: CUSTOMER_EMAIL, useClass: UserCustomerEmail },
   ],
-  exports: [CUSTOMER_EMAIL],
+  exports: [CUSTOMER_EMAIL, USER_REPO],
 })
 export class AuthModule {}

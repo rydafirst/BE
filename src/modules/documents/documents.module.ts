@@ -24,6 +24,6 @@ const useR2 = process.env.DOCUMENT_STORE_DRIVER === 'r2';
     { provide: DOCUMENT_REPO, useClass: usePg ? PrismaDocumentRepo : InMemoryDocumentRepo },
     { provide: DOCUMENT_STORE, useClass: useR2 ? R2DocumentStore : InMemoryDocumentStore },
   ],
-  exports: [DocumentsService],
+  exports: [DocumentsService, DOCUMENT_STORE],
 })
 export class DocumentsModule {}
