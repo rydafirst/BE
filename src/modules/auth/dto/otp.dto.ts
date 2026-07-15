@@ -9,6 +9,14 @@ export class OtpRequestDto {
   @IsOptional()
   @IsEmail({}, { message: 'Invalid email address' })
   email?: string;
+
+  // Present only when creating an account (first sign-up). Captured here and written to the
+  // account on verify. Letters, spaces, apostrophes, hyphens and dots only — no control chars.
+  @IsOptional()
+  @IsString()
+  @Length(2, 80)
+  @Matches(/^[\p{L}][\p{L} .'-]*$/u, { message: 'Invalid name' })
+  name?: string;
 }
 
 export class OtpVerifyDto {

@@ -43,7 +43,7 @@ export class AuthService {
   }
 
   /** Request an OTP. Rate-limited; never reveals whether the number is registered. */
-  async requestOtp(phone: string, email?: string): Promise<void> {
+  async requestOtp(phone: string, email?: string, name?: string): Promise<void> {
     // App Store reviewer identity: no live code is sent (a fixed code is accepted at verify).
     // Returns 202 like any other request, so the flow is indistinguishable to the client.
     if (isReviewPhone(this.reviewCfg(), phone)) return;
@@ -66,6 +66,7 @@ export class AuthService {
       attempts: 0,
       consumed: false,
       ...(email ? { email } : {}), // carried to the account on verify, for payment receipts
+      ...(name ? { name: name.trim() } : {}), // carried to the account on verify (sign-up only)
     });
 
     if (this.env.OTP_CHANNEL === 'email' && email) {
@@ -108,7 +109,7 @@ export class AuthService {
     await this.otps.markConsumed(phone);
     // An allowlisted admin phone is provisioned as ADMIN with the full review scope set.
     const admin = isAdminPhone(this.env.ADMIN_PHONES, phone);
-    const user = await this.users.upsertByPhone(phone, admin ? 'ADMIN' : role, record.email);
+    const user = await this.users.upsertByPhone(phone, admin ? 'ADMIN' : role, record.email, record.name);
     return this.issueTokens(user.id, user.role, admin ? ALL_ADMIN_SCOPES : undefined);
   }
 

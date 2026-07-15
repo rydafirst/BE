@@ -17,6 +17,7 @@ export interface OtpRecord {
   attempts: number;
   consumed: boolean;
   email?: string;        // captured at request time so it can be saved to the account on verify
+  name?: string;         // captured at sign-up so it can be saved to the account on verify
 }
 
 export type OtpCheck =

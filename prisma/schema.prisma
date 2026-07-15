@@ -203,6 +203,18 @@ model ChatMessage {
   @@index([jobId])
 }
 
+// A user-submitted report of an abusive/objectionable chat message (moderation queue).
+model MessageReport {
+  id         String   @id @default(uuid())
+  jobId      String
+  messageId  String
+  reporterId String
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 // Append-only job timeline (evidence + audit).
 model JobEvent {
   id        String   @id @default(uuid())
