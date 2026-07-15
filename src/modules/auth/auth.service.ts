@@ -59,20 +59,30 @@ export class AuthService {
     const allowed = await this.limiter.hit(`otp:${phone}`, perHour, 3600);
     if (!allowed) throw new HttpException('Too many requests', HttpStatus.TOO_MANY_REQUESTS);
 
+    // SECURITY (email channel): if an account already exists for this phone, the code is delivered to
+    // the email ON FILE — never to the address supplied in this request. Otherwise anyone who knows a
+    // phone number could point the login code at their own inbox and take over the account. Only a
+    // brand-new phone (no account yet) uses the supplied email, which becomes that account's email on
+    // verify. Behaviour is identical from the client's view (always 202), so nothing is enumerable.
+    const onFileEmail = await this.users.getEmailByPhone(phone);
+    const destinationEmail = onFileEmail ?? email;
+
     const code = generateOtp();
     await this.otps.save(phone, {
       codeHash: this.hasher.hash(code),
       createdAtMs: Date.now(),
       attempts: 0,
       consumed: false,
-      ...(email ? { email } : {}), // carried to the account on verify, for payment receipts
+      // Bind the account email to the destination we actually sent to: for an existing account this is
+      // the on-file address (a no-op on verify), so a request can never rewrite it to an attacker's.
+      ...(destinationEmail ? { email: destinationEmail } : {}),
       ...(name ? { name: name.trim() } : {}), // carried to the account on verify (sign-up only)
     });
 
-    if (this.env.OTP_CHANNEL === 'email' && email) {
+    if (this.env.OTP_CHANNEL === 'email' && destinationEmail) {
       const minutes = Math.round(OTP_TTL_SECONDS / 60);
       await this.email.send({
-        to: email,
+        to: destinationEmail,
         subject: `Your Rydafirst code is ${code}`,
         html: otpEmail(code, minutes),
         text: `Your Rydafirst verification code is ${code}. It expires in ${minutes} minutes. Do not share it with anyone.`,

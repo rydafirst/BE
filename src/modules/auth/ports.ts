@@ -22,6 +22,13 @@ export interface UserRepository {
   upsertByPhone(phone: string, role: Role, email?: string, name?: string): Promise<{ id: string; role: Role }>;
   /** The user's email on file (for payment receipts / mail trail), or null. */
   getEmail(userId: string): Promise<string | null>;
+  /**
+   * The registered email for a phone, or null if no account exists yet. Used so an OTP delivered by
+   * email always goes to the address ON FILE for an existing account — never to an attacker-supplied
+   * address — which prevents account takeover via the email channel. Returns null (no enumeration
+   * signal is exposed to clients; the service always responds 202).
+   */
+  getEmailByPhone(phone: string): Promise<string | null>;
   /** The user's phone number (their own — shown on their profile), or null. */
   getPhone(userId: string): Promise<string | null>;
   /** The user's avatar object key, or null. */

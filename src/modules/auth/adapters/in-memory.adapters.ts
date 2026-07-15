@@ -57,6 +57,9 @@ export class InMemoryUserRepo implements UserRepository {
   async getEmail(userId: string): Promise<string | null> {
     return this.byId.get(userId)?.email ?? null;
   }
+  async getEmailByPhone(phone: string): Promise<string | null> {
+    return this.byPhone.get(phone)?.email ?? null;
+  }
   async getPhone(userId: string): Promise<string | null> {
     return this.byId.get(userId)?.phone ?? null;
   }
