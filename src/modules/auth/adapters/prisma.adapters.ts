@@ -55,6 +55,9 @@ export class PrismaRefreshRepo implements RefreshTokenRepository {
   async revokeFamily(familyId: string): Promise<void> {
     await this.db.refreshToken.updateMany({ where: { familyId }, data: { revoked: true } });
   }
+  async revokeAllForUser(userId: string): Promise<void> {
+    await this.db.refreshToken.updateMany({ where: { userId }, data: { revoked: true } });
+  }
 }
 
 @Injectable()
@@ -93,5 +96,13 @@ export class PrismaUserRepo implements UserRepository {
   }
   async setPhotoKey(userId: string, key: string): Promise<void> {
     await this.db.user.update({ where: { id: userId }, data: { photoKey: key } as PrismaWrite });
+  }
+  async anonymize(userId: string): Promise<void> {
+    // Erase PII, release the phone number (unique placeholder), keep the row so append-only
+    // ledger/job rows remain balanced but no longer identify a person.
+    await this.db.user.update({
+      where: { id: userId },
+      data: { name: null, email: null, photoKey: null, phone: `deleted-${crypto.randomUUID()}` } as PrismaWrite,
+    });
   }
 }

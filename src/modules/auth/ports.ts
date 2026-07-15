@@ -15,6 +15,8 @@ export interface RefreshTokenRepository {
   createFamily(userId: string, tokenHash: string): Promise<void>;
   rotate(oldHash: string, newHash: string): Promise<void>;
   revokeFamily(familyId: string): Promise<void>;
+  /** Revoke every refresh token for a user (used when they delete their account). */
+  revokeAllForUser(userId: string): Promise<void>;
 }
 export const REFRESH_REPO = Symbol('REFRESH_REPO');
 
@@ -35,6 +37,13 @@ export interface UserRepository {
   getPhotoKey(userId: string): Promise<string | null>;
   /** Persist the user's avatar object key after an upload. */
   setPhotoKey(userId: string, key: string): Promise<void>;
+  /**
+   * Erase the account's personal data on the user's request (Google Play / GDPR "right to erasure").
+   * Clears name, email and avatar and releases the phone number (so it can be re-registered), while
+   * KEEPING the row id so append-only financial/ledger records stay balanced but no longer identify a
+   * person. Financial records are retained only as long as the law requires (see privacy policy).
+   */
+  anonymize(userId: string): Promise<void>;
 }
 export const USER_REPO = Symbol('USER_REPO');
 

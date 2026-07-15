@@ -24,19 +24,22 @@ export class InMemoryOtpRepo implements OtpRepository {
 
 @Injectable()
 export class InMemoryRefreshRepo implements RefreshTokenRepository {
-  private byHash = new Map<string, RefreshTokenState>();
+  private byHash = new Map<string, RefreshTokenState & { userId: string }>();
   async findByHash(h: string): Promise<RefreshTokenState | null> { return this.byHash.get(h) ?? null; }
-  async createFamily(_userId: string, tokenHash: string): Promise<void> {
-    this.byHash.set(tokenHash, { familyId: randomUUID(), tokenHash, rotated: false, revoked: false });
+  async createFamily(userId: string, tokenHash: string): Promise<void> {
+    this.byHash.set(tokenHash, { familyId: randomUUID(), tokenHash, rotated: false, revoked: false, userId });
   }
   async rotate(oldHash: string, newHash: string): Promise<void> {
     const old = this.byHash.get(oldHash);
     if (!old) return;
     old.rotated = true;
-    this.byHash.set(newHash, { familyId: old.familyId, tokenHash: newHash, rotated: false, revoked: false });
+    this.byHash.set(newHash, { familyId: old.familyId, tokenHash: newHash, rotated: false, revoked: false, userId: old.userId });
   }
   async revokeFamily(familyId: string): Promise<void> {
     for (const s of this.byHash.values()) if (s.familyId === familyId) s.revoked = true;
+  }
+  async revokeAllForUser(userId: string): Promise<void> {
+    for (const s of this.byHash.values()) if (s.userId === userId) s.revoked = true;
   }
 }
 
@@ -68,6 +71,15 @@ export class InMemoryUserRepo implements UserRepository {
   }
   async setPhotoKey(userId: string, key: string): Promise<void> {
     const u = this.byId.get(userId); if (u) u.photoKey = key;
+  }
+  async anonymize(userId: string): Promise<void> {
+    const u = this.byId.get(userId);
+    if (!u) return;
+    this.byPhone.delete(u.phone);          // release the number for re-registration
+    u.phone = `deleted-${randomUUID()}`;   // keep a unique, unusable placeholder
+    delete u.email; delete u.name; delete u.photoKey;
+    this.byPhone.set(u.phone, u);
+    this.byId.set(u.id, u);
   }
 }
 
