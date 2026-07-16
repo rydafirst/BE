@@ -29,8 +29,13 @@ export class AvatarService implements CustomerPhotoSource {
     if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) throw new BadRequestException('Invalid image size');
     if (sizeBytes > MAX_AVATAR_BYTES) throw new BadRequestException('Image must be 5 MB or smaller');
     const key = this.keyFor(userId);
-    // Bind the exact size into the signature so the store also rejects any oversized/mismatched body.
-    const { uploadUrl } = await this.store.presignPut(key, contentType, UPLOAD_TTL_SECONDS, sizeBytes);
+    // NOTE: we deliberately do NOT sign Content-Length into the presigned PUT. Doing so makes R2
+    // reject the upload with 403 unless the client's body is byte-for-byte the size it declared,
+    // and mobile image pickers re-compress on device (Android especially), so the reported
+    // `sizeBytes` rarely matches the bytes actually sent. The 5 MB ceiling is still enforced above
+    // from the declared size; avatars are private, per-user and overwrite-in-place, so an inexact
+    // body size is not a security concern.
+    const { uploadUrl } = await this.store.presignPut(key, contentType, UPLOAD_TTL_SECONDS);
     await this.users.setPhotoKey(userId, key);
     return { uploadUrl };
   }
