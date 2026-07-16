@@ -22,6 +22,13 @@ export class R2DocumentStore implements DocumentStore {
       region: 'auto',
       endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
       credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY },
+      // AWS SDK v3 (>= 3.729) adds a default CRC32 integrity checksum to PutObject and folds the
+      // `x-amz-checksum-crc32` header into the presigned URL's signed headers. Cloudflare R2 (and
+      // other S3-compatible stores) then reject the direct PUT with 403 SignatureDoesNotMatch,
+      // because the uploading client (mobile/web) never replays that header. Only add checksums
+      // when an operation strictly requires one, so presigned PUTs stay compatible with R2.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     });
   }
 
