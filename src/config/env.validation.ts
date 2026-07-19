@@ -24,6 +24,11 @@ export const envSchema = z.object({
   FLW_WEBHOOK_SECRET: z.string().default(''),
   FLW_BASE_URL: z.string().url().default('https://api.flutterwave.com/v3'),
   FLW_PUBLIC_KEY: z.string().default(''),
+  // Optional forward proxy for ALL outbound Flutterwave calls. Flutterwave's Transfers (payout) API
+  // requires IP whitelisting, but shared hosts (e.g. Railway without a Pro static IP) have no stable
+  // outbound IPv4. Point this at a proxy with a dedicated IPv4 (QuotaGuard/Fixie/self-hosted) and
+  // whitelist that proxy IP in Flutterwave. Empty = connect directly (dev / hosts with a static IP).
+  FLW_PROXY_URL: z.string().default(''),
   WEB_APP_URL: z.string().url().default('http://localhost:3000'),
   PAYMENT_DRIVER: z.enum(['fake', 'flutterwave']).default('fake'),
   // AES-256-GCM key: must decode from base64 to exactly 32 bytes. Validated here so a bad key
@@ -63,6 +68,12 @@ export const envSchema = z.object({
   // Geofence radius (metres) a rider must be within to confirm pickup/arrival. Generous by
   // default to tolerate urban GPS drift; tighten only if you see abuse.
   ARRIVAL_RADIUS_M: z.coerce.number().int().positive().default(120),
+
+  // --- Maps / address search -----------------------------------------------
+  // Google Maps Web Service key, used SERVER-SIDE only to proxy Places autocomplete/details and
+  // reverse geocoding for the mobile app (the key must never ship inside the app, where it can be
+  // extracted and abused). Empty in dev falls back to the client's on-device geocoder.
+  GOOGLE_MAPS_API_KEY: z.string().default(''),
 
   // --- OTP delivery ---------------------------------------------------------
   // How the login OTP reaches the user. `console` (dev) logs it; `email` sends via Resend;

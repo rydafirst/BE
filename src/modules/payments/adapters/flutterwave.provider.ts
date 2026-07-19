@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { ProxyAgent } from 'undici';
 import { ENV } from '../../../config/config.module.js';
 import type { Env } from '../../../config/env.validation.js';
 import { Money } from '../domain/money.js';
@@ -33,11 +34,33 @@ export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
   private readonly secret: string;
   private readonly webhookSecret: string;
   private readonly base: string;
+  // When a proxy is configured, every Flutterwave request egresses through its dedicated IPv4 (the
+  // one whitelisted in the Flutterwave dashboard), so Transfers/payouts are accepted.
+  private readonly dispatcher?: RequestInit['dispatcher'];
 
   constructor(@Inject(ENV) env: Env) {
     this.secret = env.FLW_SECRET_KEY;
     this.webhookSecret = env.FLW_WEBHOOK_SECRET;
     this.base = env.FLW_BASE_URL;
+    this.dispatcher = env.FLW_PROXY_URL
+      ? (this.buildProxyAgent(env.FLW_PROXY_URL) as unknown as RequestInit['dispatcher'])
+      : undefined;
+  }
+
+  /**
+   * Build a ProxyAgent from a proxy URL, forwarding any `user:pass@` credentials as a Proxy-
+   * Authorization header (undici doesn't always derive this from the URL). A hosted proxy must
+   * require auth so it isn't an open relay, so this path is the norm in production.
+   */
+  private buildProxyAgent(proxyUrl: string): ProxyAgent {
+    const u = new URL(proxyUrl);
+    const uri = `${u.protocol}//${u.host}`;
+    if (u.username) {
+      const creds = `${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`;
+      const token = `Basic ${Buffer.from(creds).toString('base64')}`;
+      return new ProxyAgent({ uri, token });
+    }
+    return new ProxyAgent({ uri });
   }
 
   async initCollection(p: CollectionInit): Promise<{ txRef: string; link: string }> {
@@ -130,12 +153,14 @@ export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
       try {
-        const res = await fetch(`${this.base}${path}`, {
+        const init: RequestInit = {
           method,
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.secret}` },
           ...(payload ? { body: JSON.stringify(payload) } : {}),
           signal: ctrl.signal,
-        });
+          ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
+        };
+        const res = await fetch(`${this.base}${path}`, init);
         clearTimeout(timer);
         if (!res.ok) {
           // Capture the provider's own error reason (e.g. "insufficient balance", "invalid

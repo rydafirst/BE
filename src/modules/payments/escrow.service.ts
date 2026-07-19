@@ -250,19 +250,28 @@ export class EscrowService {
     let pending = false;
     let error: string | undefined;
 
-    if (!settlement.toRider.isZero() && riderPayout && !transferRef) {
-      try {
-        const r = await this.provider.transfer({
-          amount: settlement.toRider,
-          bankCode: riderPayout.bankCode,
-          accountNumber: riderPayout.accountNumber,
-          reference: `${key}:rider`, // stable ⇒ idempotent at the PSP
-        });
-        transferRef = r.providerRef;
-      } catch (e) {
+    if (!settlement.toRider.isZero() && !transferRef) {
+      if (!riderPayout) {
+        // Money is owed to the rider but we have no bank account to send it to. NEVER silently drop
+        // it — flag it pending so it surfaces in the finance retry queue and can be paid once the
+        // rider adds an account (rather than the ledger showing "released" with no disbursement).
         pending = true;
-        error = reasonOf(e, 'transfer failed');
-        this.log.error(`Rider payout failed for ${key}: ${error}`);
+        error = 'rider has no payout account on file';
+        this.log.error(`Rider payout skipped for ${key}: no payout account on file`);
+      } else {
+        try {
+          const r = await this.provider.transfer({
+            amount: settlement.toRider,
+            bankCode: riderPayout.bankCode,
+            accountNumber: riderPayout.accountNumber,
+            reference: `${key}:rider`, // stable ⇒ idempotent at the PSP
+          });
+          transferRef = r.providerRef;
+        } catch (e) {
+          pending = true;
+          error = reasonOf(e, 'transfer failed');
+          this.log.error(`Rider payout failed for ${key}: ${error}`);
+        }
       }
     }
     if (!settlement.toCustomer.isZero() && transactionId && !refundRef) {
