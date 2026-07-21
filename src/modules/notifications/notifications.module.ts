@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { NotificationsService } from './notifications.service.js';
 import { NotificationsController } from './notifications.controller.js';
 import { NOTIFICATION_OUTBOX, PUSH_SENDER, SMS_SENDER, NOTIFICATION_FEED, PUSH_TOKEN_STORE, PUSH_DISPATCHER } from './ports.js';
@@ -11,6 +11,16 @@ import { DevPushDispatcher, ExpoPushDispatcher } from './adapters/push-dispatche
 const usePg = process.env.DB_DRIVER === 'postgres';
 // Send real push notifications when explicitly enabled (prod); otherwise log them in dev.
 const usePush = process.env.PUSH_DRIVER === 'expo';
+
+// A production deployment running the dev logger delivers ZERO notifications, and does it silently:
+// every send "succeeds". That is indistinguishable from broken push to everyone except whoever reads
+// the boot logs — so say it loudly, once, at startup.
+if (usePg && !usePush) {
+  new Logger('NotificationsModule').error(
+    'PUSH_DRIVER is not "expo" while running against Postgres — push notifications are being LOGGED, NOT SENT. ' +
+    'Set PUSH_DRIVER=expo to deliver to devices.',
+  );
+}
 
 
 @Module({

@@ -1,3 +1,5 @@
+import type { PushDeliveryReport } from './domain/push.js';
+
 export interface NotificationOutbox {
   seen(key: string): Promise<boolean>;
   mark(key: string): Promise<void>;
@@ -44,8 +46,12 @@ export interface PushMessage {
   urgent: boolean;   // urgent → play a sound (like Uber); otherwise silent banner
   jobId?: string;
 }
-/** Delivers push messages to devices (Expo push service in prod; a dev logger otherwise). */
+/**
+ * Delivers push messages to devices (Expo push service in prod; a dev logger otherwise).
+ * Returns what actually happened so the caller can retire tokens the provider rejected — without
+ * this, dead devices accumulate forever and quietly degrade every send.
+ */
 export interface PushDispatcher {
-  dispatch(messages: PushMessage[]): Promise<void>;
+  dispatch(messages: PushMessage[]): Promise<PushDeliveryReport>;
 }
 export const PUSH_DISPATCHER = Symbol('PUSH_DISPATCHER');

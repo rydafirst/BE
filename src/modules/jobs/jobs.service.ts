@@ -7,7 +7,7 @@ import type { Env } from '../../config/env.validation.js';
 import { Money } from '../payments/domain/money.js';
 import { EscrowService, type SettleResult } from '../payments/escrow.service.js';
 import type { VerifiedTxn } from '../payments/payment-provider.interface.js';
-import { assertTransition, canTransition, type JobStatus } from './domain/job-state-machine.js';
+import { assertTransition, canTransition, isDeliveryComplete, type JobStatus } from './domain/job-state-machine.js';
 import { computeFare, type FareBreakdown } from './domain/fare.js';
 import { haversineMeters, type GeoPoint } from './domain/geo.js';
 import { etaMinutes } from './domain/eta.js';
@@ -37,6 +37,8 @@ import { ridersToAnnounce } from './domain/broadcast.js';
 import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
 import { CUSTOMER_EMAIL, type CustomerEmailSource } from './customer-email.port.js';
 import { CUSTOMER_PHOTO, type CustomerPhotoSource } from './customer-photo.port.js';
+import { CONTACT_CHANNEL, type ContactChannel } from './contact-channel.port.js';
+import { contactAllowed } from './domain/contact-window.js';
 import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
 
 const QUOTE_TTL_MS = 900_000; // 15 minutes — long enough to read options + pay without the quote going stale
@@ -69,14 +71,34 @@ export class JobsService {
     @Inject(RIDER_ACCOUNT_STATUS) private readonly riderAccount: RiderAccountStatus,
     @Inject(CUSTOMER_EMAIL) private readonly customerEmail: CustomerEmailSource,
     @Inject(CUSTOMER_PHOTO) private readonly customerPhoto: CustomerPhotoSource,
+    @Inject(CONTACT_CHANNEL) private readonly contact: ContactChannel,
   ) {}
 
   /** The customer's name + photo for the assigned rider (party-only, after they're on the job). */
-  async assignedCustomerSummary(riderId: string, jobId: string): Promise<{ name?: string; photoUrl?: string }> {
+  async assignedCustomerSummary(riderId: string, jobId: string): Promise<{ name?: string; photoUrl?: string; phone?: string; phoneMasked?: boolean }> {
     const job = await this.mustFind(jobId);
     if (job.riderId !== riderId) throw new ForbiddenException();
     const photoUrl = await this.customerPhoto.photoUrl(job.customerId);
-    return { ...(job.customerName ? { name: job.customerName } : {}), ...(photoUrl ? { photoUrl } : {}) };
+    const contact = await this.contactFor(job, riderId, job.customerId);
+    return {
+      ...(job.customerName ? { name: job.customerName } : {}),
+      ...(photoUrl ? { photoUrl } : {}),
+      ...contact,
+    };
+  }
+
+  /**
+   * A number one party of a job may dial to reach the other, or nothing.
+   *
+   * Three gates, all required: the job must still be in flight (`contactAllowed`), the caller must
+   * already have been verified as a party to it, and the channel must actually return a number.
+   * Omitted entirely rather than returned as null so a phone number never appears in a payload for
+   * a job that has ended.
+   */
+  private async contactFor(job: Job, callerUserId: string, subjectUserId: string): Promise<{ phone?: string; phoneMasked?: boolean }> {
+    if (!contactAllowed(job.status)) return {};
+    const contact = await this.contact.numberFor({ jobId: job.id, callerUserId, subjectUserId });
+    return contact.number ? { phone: contact.number, phoneMasked: contact.masked } : {};
   }
 
   /**
@@ -273,7 +295,8 @@ export class JobsService {
     }
     assertTransition(job.status, 'SEARCHING');
     await this.jobs.release(jobId);
-    await this.notify.record(job.customerId, { title: 'Finding a new rider', body: 'Your rider couldn’t continue, so we’re matching another rider for you.', jobId });
+    // Time-critical: the customer's in-flight delivery has stalled and they need to know now.
+    await this.notify.record(job.customerId, { title: 'Finding a new rider', body: 'Your rider couldn’t continue, so we’re matching another rider for you.', jobId, urgent: true });
     // Re-offer to the pool, excluding the rider who just handed it back.
     await this.announceToOnlineRiders(jobId, riderId);
     return { status: 'SEARCHING' };
@@ -335,6 +358,23 @@ export class JobsService {
   }
 
   /**
+   * The single writer of a job's payout state.
+   *
+   * Payout state must be written from here and NOWHERE else on a settle path. The external
+   * disbursement can complete after `settle()` has already returned, so a caller that also wrote the
+   * flag from the returned result would race the deferred update — and could overwrite a payout that
+   * actually succeeded with the stale "queued" value, stranding the job in the retry queue.
+   *
+   * Called once with the queued state and again with the real outcome; the write is a last-write-wins
+   * upsert, so repeating it is harmless.
+   */
+  private recordPayoutState(jobId: string): (r: SettleResult) => Promise<void> {
+    return async (r) => {
+      await this.jobs.setPayoutState(jobId, { pending: r.payoutPending, error: r.payoutError ?? null, ref: r.providerRef || null });
+    };
+  }
+
+  /**
    * Release the full outbound fare to the rider (rider gets base+distance, platform keeps its fee).
    * Shared by a normal completion AND by initiating a return — in both cases the rider did the job,
    * so they are paid in full and the customer is NOT refunded. Idempotent + durable via escrow.settle.
@@ -346,22 +386,44 @@ export class JobsService {
     // Release only the FARE portion here; any pre-charged return reserve is settled separately by
     // the caller (refunded on delivery, or paid to the rider on an actual return).
     const fareMinor = job.amountMinor - (job.returnReserveMinor ?? 0);
+
+    // Confirm the DELIVERY as soon as it is durable, independently of the money leaving the bank.
+    // These are two different facts to the rider and they no longer arrive together: the payout may
+    // settle after this request has been answered.
+    await this.notify.record(riderId, {
+      title: 'Delivery confirmed',
+      body: 'Nice work — the delivery is confirmed. Your earnings are on the way.',
+      jobId: job.id,
+      urgent: true,
+    });
+
+    const recordPayout = this.recordPayoutState(job.id);
     const res = await this.escrow.settle({
       jobId: job.id, status: 'COMPLETED', outcome: 'RELEASE_FULL', collected: Money.of(fareMinor),
       platformFee: Money.of(job.platformFeeMinor ?? 0),
       ...(riderPayout ? { riderPayout } : {}),
       ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),
+      onPayoutSettled: async (r) => {
+        await recordPayout(r);
+        // Fires exactly once, whenever the money actually lands — inline during this call, or later
+        // from the deferred attempt. Reading `res.payoutPending` after settle() cannot do this: with
+        // a deferred payout it is always "pending", so the rider would never hear that they were paid.
+        if (!r.payoutPending) {
+          await this.notify.record(riderId, {
+            title: 'Payment released',
+            body: 'Your earnings for this delivery have been released.',
+            jobId: job.id,
+            urgent: true,
+          });
+        }
+      },
     });
     assertTransition('COMPLETED', 'RELEASED');
     await this.jobs.updateStatus(job.id, 'RELEASED');
-    await this.jobs.setPayoutState(job.id, { pending: res.payoutPending, error: res.payoutError ?? null, ref: res.providerRef || null });
     // If a waiting fee was funded, release it 100% to the rider on top of the fare (idempotent).
     if (job.waitingFeeMinor && job.waitingTxId) {
       await this.escrow.settleWaitingToRider(job.id, Money.of(job.waitingFeeMinor), riderPayout ?? undefined);
     }
-    await this.notify.record(riderId, res.payoutPending
-      ? { title: 'Delivery confirmed', body: 'Your earnings are being processed and will arrive shortly.', jobId: job.id }
-      : { title: 'Payment released', body: 'Delivery confirmed — your earnings have been released.', jobId: job.id });
     return res;
   }
 
@@ -574,10 +636,25 @@ export class JobsService {
       jobId, status: 'FAILED_ATTEMPT', outcome: 'FAILED_ATTEMPT', collected: Money.of(job.amountMinor), attemptFee: fee,
       ...(riderPayout ? { riderPayout } : {}),
       ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),
+      onPayoutSettled: this.recordPayoutState(jobId),
     });
-    await this.jobs.setPayoutState(jobId, { pending: res.payoutPending, error: res.payoutError ?? null, ref: res.providerRef || null });
     await this.notify.record(job.customerId, { title: 'Delivery attempt failed', body: 'The rider couldn’t complete the drop-off. Please check your order for next steps.', jobId, urgent: true });
     return { status: 'FAILED_ATTEMPT', attemptFeeMinor: fee.amount, waitingFeeMinor: feeCalc.waitingMinor };
+  }
+
+  /**
+   * Status of an already-finished delivery belonging to this rider, or null.
+   *
+   * Exists so confirmation can be idempotent: a rider whose client timed out mid-confirm (the
+   * release is durable but the response never arrived) retries the SAME correct code, and must be
+   * told the job is done rather than "invalid code". Returns null unless the caller is the assigned
+   * rider AND the job actually completed — the code hash is still verified by the caller, so this
+   * widens nothing for someone who doesn't hold the code.
+   */
+  async completedStatusForRider(riderId: string, jobId: string): Promise<JobStatus | null> {
+    const job = await this.jobs.find(jobId);
+    if (!job || job.riderId !== riderId) return null;
+    return isDeliveryComplete(job.status) ? job.status : null;
   }
 
   async getJob(actorId: string, jobId: string): Promise<Job> {
@@ -595,7 +672,10 @@ export class JobsService {
     if (!job.riderId) return { rider: null };
     const rider = await this.documents.riderSummaryFor(job.riderId);
     const { average, count } = await this.ratings.averageForRider(job.riderId);
-    return { rider: { ...rider, rating: average, ratingCount: count } };
+    // Only the customer gets the rider's number — a rider calling this about their own job would
+    // otherwise be handed their own contact details back.
+    const contact = actorId === job.customerId ? await this.contactFor(job, actorId, job.riderId) : {};
+    return { rider: { ...rider, rating: average, ratingCount: count, ...contact } };
   }
 
   /** Customer rates the rider on a completed delivery (one rating per job, fail-closed). */
@@ -658,8 +738,8 @@ export class JobsService {
       const res = await this.escrow.settle({
         jobId, status: 'CANCELLED', outcome: 'REFUND_FULL', collected: Money.of(job.amountMinor),
         ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),
+        onPayoutSettled: this.recordPayoutState(jobId),
       });
-      await this.jobs.setPayoutState(jobId, { pending: res.payoutPending, error: res.payoutError ?? null, ref: res.providerRef || null });
     }
     await this.notify.record(job.customerId, {
       title: 'Order cancelled',
@@ -702,8 +782,8 @@ export class JobsService {
       ...(opts.riderShareMinor !== undefined ? { riderShare: Money.of(opts.riderShareMinor) } : {}),
       ...(riderPayout ? { riderPayout } : {}),
       ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),
+      onPayoutSettled: this.recordPayoutState(jobId),
     });
-    await this.jobs.setPayoutState(jobId, { pending: res.payoutPending, error: res.payoutError ?? null, ref: res.providerRef || null });
     return { status: 'DISPUTE_RESOLVED' };
   }
 

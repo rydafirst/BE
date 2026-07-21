@@ -9,7 +9,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { EscrowService } from './escrow.service.js';
+import { EscrowService, PAYOUT_QUEUED } from './escrow.service.js';
+import { DeferredPayoutDispatcher } from './payout-dispatcher.port.js';
 import { Money } from './domain/money.js';
 import { deriveBalance, type LedgerEntry } from './domain/ledger.js';
 import type { IdempotencyRecord } from './domain/idempotency.js';
@@ -91,6 +92,52 @@ test('release is durable and the platform fee is retained even when the rider tr
     deriveBalance(ledger.entries, 'RIDER_PAYABLE').amount + deriveBalance(ledger.entries, 'PLATFORM_FEE').amount,
     2300,
   );
+});
+
+test('a deferred payout still posts the ledger synchronously and reports the outcome afterwards', async () => {
+  const ledger = new FakeLedger();
+  const dispatcher = new DeferredPayoutDispatcher();
+  const svc = new EscrowService(new OkProvider(), ledger, new FakeIdem(), new FakeInbox(), dispatcher);
+  const recorded: Array<{ pending: boolean }> = [];
+
+  const res = await svc.settle({
+    jobId: 'job-async', status: 'COMPLETED', outcome: 'RELEASE_FULL',
+    collected: Money.of(2300), platformFee: Money.of(300), riderPayout: RIDER,
+    onPayoutSettled: async (r) => { recorded.push({ pending: r.payoutPending }); },
+  });
+
+  // The caller is answered immediately — this is what keeps the rider's code entry fast.
+  assert.equal(res.payoutPending, true);
+  assert.equal(res.payoutError, PAYOUT_QUEUED);
+  // ...but the money split is ALREADY durable in the ledger. This is the whole safety argument:
+  // deferring the bank transfer never defers the record of who is owed what.
+  assert.equal(deriveBalance(ledger.entries, 'RIDER_PAYABLE').amount, 2000);
+  assert.equal(deriveBalance(ledger.entries, 'PLATFORM_FEE').amount, 300);
+  assert.deepEqual(recorded, [{ pending: true }], 'queued state is persisted before the attempt');
+
+  await dispatcher.onApplicationShutdown();
+  assert.deepEqual(recorded, [{ pending: true }, { pending: false }], 'success must clear the flag');
+});
+
+test('a deferred payout that fails leaves the job flagged for the retry queue', async () => {
+  const ledger = new FakeLedger();
+  const dispatcher = new DeferredPayoutDispatcher();
+  const svc = new EscrowService(new FailingProvider(), ledger, new FakeIdem(), new FakeInbox(), dispatcher);
+  const recorded: Array<{ pending: boolean; error?: string }> = [];
+
+  await svc.settle({
+    jobId: 'job-async-fail', status: 'COMPLETED', outcome: 'RELEASE_FULL',
+    collected: Money.of(2300), platformFee: Money.of(300), riderPayout: RIDER,
+    onPayoutSettled: async (r) => { recorded.push({ pending: r.payoutPending, ...(r.payoutError ? { error: r.payoutError } : {}) }); },
+  });
+  await dispatcher.onApplicationShutdown();
+
+  assert.equal(recorded.length, 2);
+  assert.equal(recorded[1]?.pending, true);
+  // The real provider reason replaces the placeholder, so ops see why it failed.
+  assert.notEqual(recorded[1]?.error, PAYOUT_QUEUED);
+  // Ledger is untouched by the failure — the rider is still owed their money.
+  assert.equal(deriveBalance(ledger.entries, 'RIDER_PAYABLE').amount, 2000);
 });
 
 test('settle is idempotent: a replay returns the cached result and never transfers twice', async () => {

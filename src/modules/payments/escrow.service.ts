@@ -1,4 +1,5 @@
-import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { InlinePayoutDispatcher, PAYOUT_DISPATCHER, type PayoutDispatcher } from './payout-dispatcher.port.js';
 import { Money } from './domain/money.js';
 import { computeSettlement, type SettlementOutcome } from './domain/refund.js';
 import { buildHoldPosting, buildSettlementPosting } from './domain/escrow-posting.js';
@@ -24,7 +25,17 @@ interface SettleParams {
   riderShare?: Money;
   riderPayout?: RiderPayout;   // required to actually transfer to the rider
   transactionId?: string;      // the collection txn id, required to actually refund
+  /**
+   * Persist the payout outcome. Supplied by the caller so the money engine never needs to know about
+   * jobs. Called once with the queued state and again with the real outcome when the disbursement is
+   * deferred, so it must be a last-write-wins upsert. When supplied, the caller must NOT also write
+   * payout state from the returned result — that would race the deferred update and overwrite it.
+   */
+  onPayoutSettled?: (result: SettleResult) => Promise<void>;
 }
+
+/** Reported while an external disbursement has been accepted but not yet attempted. */
+export const PAYOUT_QUEUED = 'payout queued';
 
 /**
  * Result of a settlement. The ledger release is durable regardless of `payoutPending`.
@@ -47,13 +58,19 @@ interface DisburseResult { transferRef?: string; refundRef?: string; pending: bo
 @Injectable()
 export class EscrowService {
   private readonly log = new Logger(EscrowService.name);
+  private readonly dispatcher: PayoutDispatcher;
 
   constructor(
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
     @Inject(LEDGER_REPO) private readonly ledger: LedgerRepository,
     @Inject(IDEMPOTENCY_STORE) private readonly idem: IdempotencyStore,
     @Inject(WEBHOOK_INBOX) private readonly inbox: WebhookInboxStore,
-  ) {}
+    // Optional with an inline default: unwired construction (unit tests, scripts) keeps the exact
+    // pre-existing synchronous behaviour, so deferring payouts is opt-in at the composition root.
+    @Optional() @Inject(PAYOUT_DISPATCHER) dispatcher?: PayoutDispatcher,
+  ) {
+    this.dispatcher = dispatcher ?? new InlinePayoutDispatcher();
+  }
 
   /** Start collection: returns the hosted-checkout link to redirect the customer to. */
   beginCollection(jobId: string, amount: Money, customerEmail: string, redirectUrl: string): Promise<{ txRef: string; link: string }> {
@@ -143,10 +160,7 @@ export class EscrowService {
       throw new ConflictException('Settlement already in progress for this job');
     }
     await this.ledger.append(buildSettlementPosting(jobId, settlement));
-    const disbursed = await this.disburse(key, settlement, riderPayout, transactionId);
-    const result = this.toResult(disbursed);
-    await this.idem.complete(key, result);
-    return result;
+    return this.disburseAndRecord(key, settlement, riderPayout, transactionId);
   }
 
   /** Name enquiry for a bank + account number (so the client never types the account name). */
@@ -190,17 +204,42 @@ export class EscrowService {
     // 1) DURABLE, no external I/O — release is recorded in the ledger, split three ways.
     await this.ledger.append(buildSettlementPosting(p.jobId, settlement));
 
-    // 2) BEST-EFFORT external disbursement — never throws; failures become payoutPending.
-    const disbursed = await this.disburse(key, settlement, p.riderPayout, p.transactionId);
+    // 2) BEST-EFFORT external disbursement — never throws; failures become payoutPending. Whether
+    //    this runs inline or after the response is the dispatcher's call, not ours.
+    return this.disburseAndRecord(key, settlement, p.riderPayout, p.transactionId, p.onPayoutSettled);
+  }
 
-    const result = this.toResult(disbursed);
-    await this.idem.complete(key, result);
-    return result;
+  /**
+   * Run the external disbursement through the dispatcher and persist whatever outcome comes back.
+   *
+   * The ledger is already durable by the time this is called, so every path here is recoverable:
+   * the worst case is a job left flagged `payoutPending`, which is exactly what the admin retry
+   * queue consumes. Nothing below can lose money — it can only delay it.
+   */
+  private async disburseAndRecord(
+    key: string,
+    settlement: { toRider: Money; toCustomer: Money },
+    riderPayout?: RiderPayout,
+    transactionId?: string,
+    onPayoutSettled?: (result: SettleResult) => Promise<void>,
+  ): Promise<SettleResult> {
+    const persist = async (result: SettleResult): Promise<void> => {
+      await this.idem.complete(key, result);
+      if (onPayoutSettled) await onPayoutSettled(result);
+    };
+    return this.dispatcher.execute(
+      async () => this.toResult(await this.disburse(key, settlement, riderPayout, transactionId)),
+      persist,
+      { providerRef: '', payoutPending: true, payoutError: PAYOUT_QUEUED },
+    );
   }
 
   /**
    * Re-attempt only the external disbursement for an already-released job (the ledger is untouched).
    * Idempotent: the rider transfer reuses the same provider reference so it can never double-pay.
+   *
+   * Deliberately NOT routed through the dispatcher: this is the admin "Retry payout" button, and the
+   * operator pressing it needs the real answer in the response, not "queued".
    */
   async retryDisbursement(p: SettleParams): Promise<SettleResult> {
     const key = opKey('settle', p.jobId);

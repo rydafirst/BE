@@ -37,10 +37,27 @@ export class NotificationsService {
   private async pushToDevices(userId: string, n: { title: string; body: string; jobId?: string; urgent?: boolean }): Promise<void> {
     const devices = await this.tokens.listForUser(userId);
     if (devices.length === 0) return;
-    await this.dispatcher.dispatch(devices.map((d) => ({
+    const report = await this.dispatcher.dispatch(devices.map((d) => ({
       to: d.token, title: n.title, body: n.body, urgent: Boolean(n.urgent),
       ...(n.jobId ? { jobId: n.jobId } : {}),
     })));
+    await this.retireTokens(new Map(devices.map((d) => [d.token, userId])), report.invalidTokens);
+  }
+
+  /**
+   * Delete tokens the push provider says no longer exist (app uninstalled or reinstalled).
+   *
+   * Without this, a rider who reinstalls leaves a dead token behind forever; every later send
+   * partially fails and the failures look identical to "push is broken". Only ever called with
+   * tokens the provider explicitly rejected as unregistered — never on a transient or unparseable
+   * response, which would wipe out working devices.
+   */
+  private async retireTokens(owners: ReadonlyMap<string, string>, invalidTokens: readonly string[]): Promise<void> {
+    for (const token of invalidTokens) {
+      const userId = owners.get(token);
+      if (!userId) continue;
+      try { await this.tokens.remove(userId, token); } catch { /* cleanup is best-effort */ }
+    }
   }
 
   /**
@@ -52,12 +69,17 @@ export class NotificationsService {
     try {
       const perRider = await Promise.all(riderIds.map((id) => this.tokens.listForUser(id)));
       const messages: PushMessage[] = [];
-      for (const devices of perRider) {
+      const owners = new Map<string, string>(); // token -> rider, so dead devices can be retired
+      perRider.forEach((devices, i) => {
+        const riderId = riderIds[i];
         for (const d of devices) {
+          if (riderId) owners.set(d.token, riderId);
           messages.push({ to: d.token, title: n.title, body: n.body, urgent: true, ...(n.jobId ? { jobId: n.jobId } : {}) });
         }
-      }
-      if (messages.length > 0) await this.dispatcher.dispatch(messages);
+      });
+      if (messages.length === 0) return;
+      const report = await this.dispatcher.dispatch(messages);
+      await this.retireTokens(owners, report.invalidTokens);
     } catch { /* broadcast is best-effort — never break the job flow */ }
   }
 

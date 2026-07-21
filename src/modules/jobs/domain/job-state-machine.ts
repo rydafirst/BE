@@ -81,3 +81,16 @@ export function canRefund(status: JobStatus): boolean {
 export function isTerminal(status: JobStatus): boolean {
   return TRANSITIONS[status].length === 0;
 }
+
+/**
+ * The delivery itself has landed and the escrow release has been claimed. COMPLETED is the moment
+ * the receiver's code was accepted; RELEASED adds "funds have left escrow". Both mean the rider has
+ * finished the job, so both are treated as done by the clients' Activity views and by the idempotent
+ * re-confirm path (a client that timed out and retried must be told "done", not "invalid code").
+ *
+ * Deliberately NOT `isTerminal`: COMPLETED can still move to DISPUTED, and a disputed job is not a
+ * failed delivery — the drop-off still happened.
+ */
+export function isDeliveryComplete(status: JobStatus): boolean {
+  return status === 'COMPLETED' || status === 'RELEASED';
+}

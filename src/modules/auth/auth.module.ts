@@ -12,6 +12,8 @@ import { RedisRateLimiter } from './adapters/redis-rate-limiter.js';
 import { TermiiOtpSender } from './adapters/termii-otp-sender.js';
 import { UserCustomerEmail } from './adapters/user-customer-email.js';
 import { CUSTOMER_EMAIL } from '../jobs/customer-email.port.js';
+import { DirectContactChannel } from './adapters/direct-contact-channel.js';
+import { CONTACT_CHANNEL } from '../jobs/contact-channel.port.js';
 import { ENV } from '../../config/config.module.js';
 import type { Env } from '../../config/env.validation.js';
 
@@ -36,7 +38,10 @@ const usePg = process.env.DB_DRIVER === 'postgres';
     },
     // Customer email lookup for payment receipts, shared with the jobs module.
     { provide: CUSTOMER_EMAIL, useClass: UserCustomerEmail },
+    // Phone lookup so the two parties of a live job can call each other. Swap for a proxy-number
+    // adapter to stop handing out real numbers — nothing outside this line needs to change.
+    { provide: CONTACT_CHANNEL, useClass: DirectContactChannel },
   ],
-  exports: [CUSTOMER_EMAIL, USER_REPO, REFRESH_REPO],
+  exports: [CUSTOMER_EMAIL, CONTACT_CHANNEL, USER_REPO, REFRESH_REPO],
 })
 export class AuthModule {}

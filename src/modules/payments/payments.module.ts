@@ -3,6 +3,7 @@ import { EscrowService } from './escrow.service.js';
 import { PAYMENT_PROVIDER } from './payment-provider.interface.js';
 import { BANK_DIRECTORY } from './bank-directory.port.js';
 import { LEDGER_REPO, IDEMPOTENCY_STORE, WEBHOOK_INBOX } from './ports.js';
+import { DeferredPayoutDispatcher, InlinePayoutDispatcher, PAYOUT_DISPATCHER } from './payout-dispatcher.port.js';
 import { FlutterwaveProvider } from './adapters/flutterwave.provider.js';
 import { FakePaymentProvider } from './adapters/fake.provider.js';
 import {
@@ -13,6 +14,13 @@ import { PrismaIdempotencyStore, PrismaWebhookInbox } from './adapters/prisma.st
 
 const usePg = process.env.DB_DRIVER === 'postgres';
 const useFlw = process.env.PAYMENT_DRIVER === 'flutterwave';
+/**
+ * Deferred by default: the external bank transfer must not sit on the delivery-confirmation request
+ * path, where a slow PSP turns into a failed code entry on the rider's phone. Set
+ * PAYOUT_DISPATCH=inline to fall back to the original synchronous behaviour without a code change —
+ * the ledger release and the retry queue are identical either way.
+ */
+const deferPayouts = process.env.PAYOUT_DISPATCH !== 'inline';
 
 @Module({
   providers: [
@@ -23,6 +31,7 @@ const useFlw = process.env.PAYMENT_DRIVER === 'flutterwave';
     { provide: LEDGER_REPO, useClass: usePg ? PrismaLedgerRepository : InMemoryLedgerRepo },
     { provide: IDEMPOTENCY_STORE, useClass: usePg ? PrismaIdempotencyStore : InMemoryIdempotencyStore },
     { provide: WEBHOOK_INBOX, useClass: usePg ? PrismaWebhookInbox : InMemoryWebhookInbox },
+    { provide: PAYOUT_DISPATCHER, useClass: deferPayouts ? DeferredPayoutDispatcher : InlinePayoutDispatcher },
   ],
   exports: [EscrowService, BANK_DIRECTORY],
 })

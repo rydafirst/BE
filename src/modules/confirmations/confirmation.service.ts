@@ -32,7 +32,21 @@ export class ConfirmationService {
     const matches = this.hasher.verify(code, rec.codeHash);
     const res = checkCode(rec, matches, Date.now());
     if (!res.ok) {
-      if (res.reason === 'mismatch') await this.codes.incrementAttempts(jobId, 'DELIVERY');
+      // Idempotent retry. The release is durable but the response may never have reached the rider
+      // (the external payout can make this request slow enough for the client to time out). They
+      // then re-submit the SAME correct code against a now-consumed record, and telling them
+      // "Invalid code" strands a delivery that actually succeeded. Answer with the real status.
+      //
+      // Fails closed on every other path: the code hash must still verify (`matches`), the caller
+      // must be the rider the job is assigned to, and the job must genuinely have completed.
+      // A wrong code on a consumed record does not reach here.
+      if (res.reason === 'already_used' && matches) {
+        const status = await this.jobs.completedStatusForRider(riderId, jobId);
+        if (status) return { status };
+      }
+      // Count every wrong guess, not just the ones on live records, so a burned or expired code
+      // can't be used as an unmetered oracle.
+      if (!matches) await this.codes.incrementAttempts(jobId, 'DELIVERY');
       throw new UnauthorizedException('Invalid code');
     }
     // Complete FIRST (durable release + best-effort payout), then burn the code. completeDelivery

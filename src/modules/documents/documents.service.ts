@@ -203,7 +203,9 @@ export class DocumentsService {
     if (after.status === 'APPROVED') {
       await this.notify.record(doc.riderId, { title: 'You’re verified', body: 'All your documents are approved — you can go online and start delivering.', urgent: true });
     } else {
-      await this.notify.record(doc.riderId, { title: 'Document approved', body: `Your ${specFor(doc.type)?.label ?? 'document'} was approved.` });
+      // A rider cannot go online until their documents clear, so approval is worth a ring — it is
+      // the moment they become able to earn.
+      await this.notify.record(doc.riderId, { title: 'Document approved', body: `Your ${specFor(doc.type)?.label ?? 'document'} was approved.`, urgent: true });
     }
     return { riderStatus: after.status };
   }

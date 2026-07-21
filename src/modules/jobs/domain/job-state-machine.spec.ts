@@ -6,7 +6,9 @@ import {
   canRefund,
   canTransition,
   IllegalTransitionError,
+  isDeliveryComplete,
   isTerminal,
+  type JobStatus,
 } from './job-state-machine.js';
 
 test('allows the delivery happy-path transitions', () => {
@@ -57,4 +59,24 @@ test('terminal states have no outgoing transitions', () => {
   for (const s of ['RELEASED', 'CANCELLED', 'DISPUTE_RESOLVED'] as const) {
     assert.ok(isTerminal(s));
   }
+});
+
+test('a delivery counts as complete at COMPLETED and stays complete at RELEASED', () => {
+  assert.ok(isDeliveryComplete('COMPLETED'));
+  assert.ok(isDeliveryComplete('RELEASED'));
+});
+
+test('no state before the drop-off counts as a complete delivery', () => {
+  const notYet: JobStatus[] = [
+    'CREATED', 'FUNDED', 'SEARCHING', 'ACCEPTED', 'EN_ROUTE_PICKUP', 'AT_PICKUP',
+    'IN_PROGRESS', 'EN_ROUTE_DROP', 'ARRIVED', 'AWAITING_CODE', 'WAITING',
+    'AWAITING_RESOLUTION', 'CANCELLED', 'FAILED_ATTEMPT',
+  ];
+  for (const s of notYet) assert.equal(isDeliveryComplete(s), false, `${s} must not read as complete`);
+});
+
+test('completeness is not the same as terminality — COMPLETED can still be disputed', () => {
+  assert.ok(isDeliveryComplete('COMPLETED'));
+  assert.equal(isTerminal('COMPLETED'), false);
+  assert.ok(canTransition('COMPLETED', 'DISPUTED'));
 });
