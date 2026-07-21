@@ -97,6 +97,12 @@ export const envSchema = z.object({
   // Leave both empty in normal operation.
   REVIEW_LOGIN_PHONE: z.string().default(''),
   REVIEW_LOGIN_OTP: z.string().default(''),
+  // Additional reviewer identities as a comma-separated list of `phone:code` pairs, so you can give
+  // Apple/Google a separate demo account per flow, e.g.
+  //   REVIEW_LOGINS=+2348011111111:246810,+2348022222222:135791
+  // Each is an ORDINARY account (keep these numbers out of ADMIN_PHONES, or they'll be admins and
+  // every customer/rider screen will 403 for the reviewer).
+  REVIEW_LOGINS: z.string().default(''),
 }).superRefine((env, ctx) => {
   // Fail-closed: if you turn on Postgres, the infra URLs must be present and valid.
   if (env.DB_DRIVER === 'postgres') {
@@ -126,6 +132,17 @@ export const envSchema = z.object({
   }
   if (reviewOtpSet && !/^\d{4,8}$/.test(env.REVIEW_LOGIN_OTP)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['REVIEW_LOGIN_OTP'], message: 'must be 4-8 digits' });
+  }
+  // Fail fast on a malformed reviewer list so a typo can't silently lock a reviewer out.
+  for (const entry of env.REVIEW_LOGINS.split(',')) {
+    const e = entry.trim();
+    if (!e) continue;
+    if (!/^\+?[\d\s-]+:\d{4,8}$/.test(e)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ['REVIEW_LOGINS'],
+        message: `invalid entry "${e}" — expected phone:code with a 4-8 digit code (e.g. +2348011111111:246810)`,
+      });
+    }
   }
 });
 

@@ -2,7 +2,7 @@ import { BadRequestException, HttpException, HttpStatus, Inject, Injectable, Una
 import { HmacHasher } from '../../common/security/hmac-hasher.js';
 import { checkOtp, generateOtp, OTP_TTL_SECONDS } from './domain/otp.js';
 import { decideRefresh } from './domain/refresh-rotation.js';
-import { isReviewPhone, reviewCodeMatches, type ReviewLoginConfig } from './domain/review-login.js';
+import { isReviewPhone, parseReviewLogins, reviewCodeMatches, type ReviewLoginConfig } from './domain/review-login.js';
 import { ALL_ADMIN_SCOPES, isAdminPhone } from './domain/admin-login.js';
 import type { AdminScope } from '../../common/auth/roles.js';
 import { ENV } from '../../config/config.module.js';
@@ -37,9 +37,9 @@ export class AuthService {
     @Inject(ENV) private readonly env: Env,
   ) {}
 
-  /** Config for the App Store reviewer login (empty strings => disabled). */
+  /** Configured store-reviewer identities (empty list => disabled). */
   private reviewCfg(): ReviewLoginConfig {
-    return { phone: this.env.REVIEW_LOGIN_PHONE, otp: this.env.REVIEW_LOGIN_OTP };
+    return parseReviewLogins(this.env.REVIEW_LOGINS, this.env.REVIEW_LOGIN_PHONE, this.env.REVIEW_LOGIN_OTP);
   }
 
   /** Request an OTP. Rate-limited; never reveals whether the number is registered. */
