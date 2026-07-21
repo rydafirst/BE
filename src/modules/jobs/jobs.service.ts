@@ -10,7 +10,6 @@ import type { VerifiedTxn } from '../payments/payment-provider.interface.js';
 import { assertTransition, canTransition, isDeliveryComplete, type JobStatus } from './domain/job-state-machine.js';
 import { computeFare, type FareBreakdown } from './domain/fare.js';
 import { haversineMeters, type GeoPoint } from './domain/geo.js';
-import { etaMinutes } from './domain/eta.js';
 import { isWithinGeofence } from '../confirmations/domain/geofence.js';
 import { signQuote, verifyQuote } from './domain/quote-token.js';
 import { cancellationPolicy } from './domain/cancellation.js';
@@ -20,8 +19,6 @@ import { accruedWaitingMinor, computeReturnFareMinor, graceElapsed } from './dom
 import { decideFunding } from './domain/funding.js';
 import { FARE_CONFIG } from './domain/fare.js';
 import { isPaymentExpired } from './domain/payment-window.js';
-import { coarseArea } from './domain/area.js';
-import { approximatePoint } from './domain/approx.js';
 import { resolutionToSettlement, type Resolution } from '../disputes/domain/dispute.js';
 import { JOB_REPO, type Job, type JobRepository } from './ports.js';
 import { RATE_LIMITER, type RateLimiter } from '../auth/ports.js';
@@ -31,8 +28,6 @@ import { DocumentsService } from '../documents/documents.service.js';
 import { RatingsService } from '../ratings/ratings.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { RIDER_ACCOUNT_STATUS, type RiderAccountStatus } from '../accounts/rider-account-status.port.js';
-import { isValidStars } from '../ratings/domain/rating.js';
-import type { Rating } from '../ratings/ports.js';
 import { ridersToAnnounce } from './domain/broadcast.js';
 import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
 import { CUSTOMER_EMAIL, type CustomerEmailSource } from './customer-email.port.js';
@@ -46,15 +41,9 @@ const QUOTE_TTL_MS = 900_000; // 15 minutes — long enough to read options + pa
 const PROGRESS_STEPS: readonly JobStatus[] = ['EN_ROUTE_PICKUP', 'AT_PICKUP', 'IN_PROGRESS', 'EN_ROUTE_DROP'];
 
 export type CreatedJob = Job & { paymentLink: string };
+// The rider job board moved to JobDiscoveryService; re-exported so existing imports keep working.
+export type { AvailableJob } from './job-discovery.service.js';
 
-/** PII-free projection shown to riders in the discovery feed. Only a COARSE area is exposed
- *  pre-accept (no exact coordinates, no recipient/customer/refund data). */
-export type AvailableJob = Pick<Job, 'id' | 'type' | 'amountMinor' | 'currency' | 'createdAt'>
-  & {
-    pickupArea: string; dropoffArea: string; pickupApprox: { lat: number; lng: number };
-    tripDistanceMeters: number; tripEtaMin: number;      // pickup -> dropoff
-    toPickupMeters?: number; toPickupEtaMin?: number;    // rider -> pickup (only when location is known)
-  };
 
 @Injectable()
 export class JobsService {
@@ -682,36 +671,6 @@ export class JobsService {
     return { rider: { ...rider, rating: average, ratingCount: count, ...contact } };
   }
 
-  /** Customer rates the rider on a completed delivery (one rating per job, fail-closed). */
-  async rateJob(customerId: string, jobId: string, input: { stars: number; comment?: string }): Promise<Rating> {
-    if (!isValidStars(input.stars)) throw new BadRequestException('Rating must be from 1 to 5 stars');
-    const job = await this.mustFind(jobId);
-    if (job.customerId !== customerId) throw new ForbiddenException();
-    if (!['COMPLETED', 'RELEASED'].includes(job.status)) throw new ConflictException('You can only rate a completed delivery');
-    if (!job.riderId) throw new ConflictException('This delivery had no rider to rate');
-    if (await this.ratings.hasRatingForJob(jobId)) throw new ConflictException('You already rated this delivery');
-    return this.ratings.record({
-      jobId, riderId: job.riderId, customerId, stars: input.stars,
-      ...(input.comment ? { comment: input.comment } : {}),
-    });
-  }
-
-  /** Completed deliveries the customer hasn't rated yet — drives the rating prompt. */
-  async pendingRatings(customerId: string): Promise<Array<{ jobId: string; amountMinor: number; createdAt: string; dropoffArea?: string; riderName?: string }>> {
-    const jobs = await this.jobs.listByCustomer(customerId);
-    const done = jobs.filter((j) => ['COMPLETED', 'RELEASED'].includes(j.status) && j.riderId);
-    const out: Array<{ jobId: string; amountMinor: number; createdAt: string; dropoffArea?: string; riderName?: string }> = [];
-    for (const j of done) {
-      if (await this.ratings.hasRatingForJob(j.id)) continue;
-      const summary = j.riderId ? await this.documents.riderSummaryFor(j.riderId) : null;
-      out.push({
-        jobId: j.id, amountMinor: j.amountMinor, createdAt: j.createdAt,
-        ...(j.dropoffArea ? { dropoffArea: j.dropoffArea } : {}),
-        ...(summary?.name ? { riderName: summary.name } : {}),
-      });
-    }
-    return out;
-  }
 
   /** A customer's order history, newest first (unpaid orders past the window are auto-cancelled). */
   async myJobs(customerId: string): Promise<Job[]> {
@@ -850,36 +809,6 @@ export class JobsService {
   async listRecentJobs(limit = 100): Promise<Job[]> { return this.jobs.listRecent(limit); }
   async jobsForRider(riderId: string): Promise<Job[]> { return this.jobs.listByRider(riderId); }
 
-  /**
-   * Jobs an online rider can currently accept: funded and still searching for a rider.
-   * (First-accept-wins is enforced atomically in accept(); this is only the discovery feed.)
-   * Newest first. In production this is filtered by the rider's geo proximity via the matching module.
-   *
-   * SECURITY: returns a trimmed, PII-free projection — a rider sees only what they need to
-   * decide (type, fare, pickup/dropoff coords). Recipient name/phone, customerId and the
-   * refund account are NOT exposed until the rider actually claims the job.
-   */
-  async availableJobs(riderPos?: GeoPoint): Promise<AvailableJob[]> {
-    const active = (await this.jobs.listActive()).filter((j) => j.status === 'SEARCHING');
-    const mapped: AvailableJob[] = active.map((j) => {
-      const tripMeters = haversineMeters(j.pickup, j.dropoff);
-      // Distance/ETA from the rider to the pickup — the "X min away" a rider decides on.
-      const toPickup = riderPos ? haversineMeters(riderPos, j.pickup) : undefined;
-      return {
-        id: j.id, type: j.type, amountMinor: j.amountMinor, currency: j.currency, createdAt: j.createdAt,
-        pickupArea: j.pickupArea || coarseArea(j.pickupAddress),
-        dropoffArea: j.dropoffArea || coarseArea(j.dropoffAddress),
-        pickupApprox: approximatePoint(j.pickup),
-        tripDistanceMeters: Math.round(tripMeters),
-        tripEtaMin: etaMinutes(tripMeters),
-        ...(toPickup !== undefined ? { toPickupMeters: Math.round(toPickup), toPickupEtaMin: etaMinutes(toPickup) } : {}),
-      };
-    });
-    // Every rider sees every job — proximity only orders the board. With a location we sort
-    // NEAREST-first (and each card shows its km + ETA); without one we fall back to newest-first.
-    if (riderPos) return mapped.sort((a, b) => (a.toPickupMeters! - b.toPickupMeters!));
-    return mapped.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }
   async status(jobId: string): Promise<JobStatus> { return (await this.mustFind(jobId)).status; }
 
   /**

@@ -1,6 +1,9 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decorator.js';
+import { JobTimingsService } from './job-timings.service.js';
+import { JobDiscoveryService } from './job-discovery.service.js';
+import { JobRatingsService } from './job-ratings.service.js';
 import { JobsService } from './jobs.service.js';
 import { IsInt, IsNumber, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { AdvanceDto, ArriveDto, ConfirmPaymentDto, CreateJobDto, QuoteRequestDto } from './dto/jobs.dto.js';
@@ -21,7 +24,12 @@ class RiderLocationDto {
 
 @Controller({ path: 'jobs', version: '1' })
 export class JobsController {
-  constructor(private readonly jobs: JobsService) {}
+  constructor(
+    private readonly jobs: JobsService,
+    private readonly timing: JobTimingsService,
+    private readonly discovery: JobDiscoveryService,
+    private readonly ratings: JobRatingsService,
+  ) {}
 
   // ---- Customer ----
   @Post('quote')
@@ -47,7 +55,7 @@ export class JobsController {
   @Get('pending-ratings')
   @RequirePermission('job:read:own')
   pendingRatings(@CurrentUser() user: AuthUser) {
-    return this.jobs.pendingRatings(user.id);
+    return this.ratings.pendingRatings(user.id);
   }
 
   // ---- Rider: discovery feed (declared before :id so "available" isn't read as an id) ----
@@ -58,7 +66,7 @@ export class JobsController {
   available(@Body() dto: RiderLocationDto) {
     const pos = Number.isFinite(dto.lat) && Number.isFinite(dto.lng) && dto.lat !== undefined && dto.lng !== undefined
       ? { lat: dto.lat, lng: dto.lng } : undefined;
-    return this.jobs.availableJobs(pos);
+    return this.discovery.availableJobs(pos);
   }
 
   // ---- Rider: jobs assigned to me (so an active trip is resumable from any device) ----
@@ -72,6 +80,13 @@ export class JobsController {
   @RequirePermission('job:read:own')
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.jobs.getJob(user.id, id);
+  }
+
+  /** Per-stage durations for this delivery (party-only). Powers the rider's stage timers. */
+  @Get(':id/timings')
+  @RequirePermission('job:read:own')
+  timings(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.timing.forJob(user.id, id);
   }
 
   @Get(':id/rider')
@@ -89,7 +104,7 @@ export class JobsController {
   @Post(':id/rating')
   @RequirePermission('job:read:own')
   rate(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: RatingDto) {
-    return this.jobs.rateJob(user.id, id, dto);
+    return this.ratings.rateJob(user.id, id, dto);
   }
 
   @Post(':id/confirm-payment')

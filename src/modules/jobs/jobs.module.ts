@@ -22,6 +22,9 @@ import { ProfileModule } from '../profile/profile.module.js';
 import { JOB_STATUS_LOG } from './status-log.port.js';
 import { InMemoryJobStatusLog, PrismaJobStatusLog } from './adapters/status-log.adapters.js';
 import { InactivityMonitor } from './inactivity.monitor.js';
+import { JobTimingsService } from './job-timings.service.js';
+import { JobDiscoveryService } from './job-discovery.service.js';
+import { JobRatingsService } from './job-ratings.service.js';
 
 const usePg = process.env.DB_DRIVER === 'postgres';
 
@@ -38,6 +41,9 @@ const usePg = process.env.DB_DRIVER === 'postgres';
     // Append-only status history: powers per-stage timings and the inactivity scan.
     { provide: JOB_STATUS_LOG, useClass: usePg ? PrismaJobStatusLog : InMemoryJobStatusLog },
     InactivityMonitor,
+    JobTimingsService,
+    JobDiscoveryService,
+    JobRatingsService,
   ],
   exports: [JobsService],
 })
