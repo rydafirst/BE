@@ -94,22 +94,23 @@ export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
   async transfer(p: {
     amount: Money; bankCode: string; accountNumber: string; reference: string; narration?: string;
   }): Promise<{ providerRef: string }> {
+    const reference = flwReference(p.reference);
     const body = await this.call('POST', '/transfers', {
       account_bank: p.bankCode,
       account_number: p.accountNumber,
       amount: p.amount.amount / 100,
       currency: 'NGN',
-      reference: p.reference,
+      reference,
       narration: p.narration ?? 'Rydafirst rider payout',
     });
-    return { providerRef: String(body?.data?.id ?? p.reference) };
+    return { providerRef: String(body?.data?.id ?? reference) };
   }
 
   async refund(p: { transactionId: string; amount: Money; reference?: string }): Promise<{ providerRef: string }> {
     const body = await this.call('POST', `/transactions/${encodeURIComponent(p.transactionId)}/refund`, {
       amount: p.amount.amount / 100,
       // Included for providers/endpoints that honour an idempotency reference; harmless otherwise.
-      ...(p.reference ? { reference: p.reference } : {}),
+      ...(p.reference ? { reference: flwReference(p.reference) } : {}),
     });
     return { providerRef: String(body?.data?.id ?? p.transactionId) };
   }
@@ -192,4 +193,19 @@ export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
       return `HTTP ${res.status}`;
     }
   }
+}
+
+/**
+ * Coerce an internal idempotency reference into one Flutterwave accepts.
+ *
+ * Flutterwave rejects a transfer/refund `reference` containing anything outside
+ * [letters, numbers, underscore, dash] — and our internal keys use ':' as a separator
+ * (`settle:<jobId>:v1:rider`). Every disallowed character maps to '_'.
+ *
+ * MUST be deterministic: the same input always yields the same output, so a retry re-issues the
+ * SAME reference and Flutterwave de-dupes it. A non-deterministic transform here (a timestamp, a
+ * random suffix) would break idempotency and could pay a rider twice.
+ */
+export function flwReference(ref: string): string {
+  return ref.replace(/[^A-Za-z0-9_-]/g, '_');
 }
