@@ -325,6 +325,17 @@ model Setting {
 }
 
 // A customer's rating of the rider after a completed delivery (one per job).
+// Append-only log of every status a job entered, and when. Durations are DERIVED from this rather
+// than stored, so a computed figure can never disagree with the timestamps behind it. Append-only
+// also means a new JobStatus needs no migration, and a dispute can be reconstructed after the fact.
+model JobStatusEvent {
+  id        String    @id @default(uuid())
+  jobId     String
+  status    JobStatus
+  at        DateTime  @default(now())
+  @@index([jobId, at])
+}
+
 model Rating {
   id         String   @id @default(uuid())
   jobId      String   @unique

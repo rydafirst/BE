@@ -34,6 +34,8 @@ if (usePg && !usePush) {
     { provide: PUSH_SENDER, useClass: DevPushSender },
     { provide: SMS_SENDER, useClass: DevSmsSender },
   ],
-  exports: [NotificationsService],
+  // The outbox is exported so the inactivity monitor can dedupe its reminders through the same
+  // once-only mechanism every other notification uses, rather than inventing a second one.
+  exports: [NotificationsService, NOTIFICATION_OUTBOX],
 })
 export class NotificationsModule {}

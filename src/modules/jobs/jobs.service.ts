@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { ENV } from '../../config/config.module.js';
@@ -38,6 +38,7 @@ import { RIDER_PAYOUT, type RiderPayoutSource } from './rider-payout.port.js';
 import { CUSTOMER_EMAIL, type CustomerEmailSource } from './customer-email.port.js';
 import { CUSTOMER_PHOTO, type CustomerPhotoSource } from './customer-photo.port.js';
 import { CONTACT_CHANNEL, type ContactChannel } from './contact-channel.port.js';
+import { JOB_STATUS_LOG, type JobStatusLog } from './status-log.port.js';
 import { contactAllowed } from './domain/contact-window.js';
 import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
 
@@ -57,6 +58,8 @@ export type AvailableJob = Pick<Job, 'id' | 'type' | 'amountMinor' | 'currency' 
 
 @Injectable()
 export class JobsService {
+  private readonly log = new Logger(JobsService.name);
+
   constructor(
     @Inject(ENV) private readonly env: Env,
     @Inject(JOB_REPO) private readonly jobs: JobRepository,
@@ -72,6 +75,7 @@ export class JobsService {
     @Inject(CUSTOMER_EMAIL) private readonly customerEmail: CustomerEmailSource,
     @Inject(CUSTOMER_PHOTO) private readonly customerPhoto: CustomerPhotoSource,
     @Inject(CONTACT_CHANNEL) private readonly contact: ContactChannel,
+    @Inject(JOB_STATUS_LOG) private readonly statusLog: JobStatusLog,
   ) {}
 
   /** The customer's name + photo for the assigned rider (party-only, after they're on the job). */
@@ -224,9 +228,9 @@ export class JobsService {
     await this.jobs.setPaymentRefs(job.id, { txId: verified.transactionId });
     if (job.status === 'CREATED') {
       assertTransition('CREATED', 'FUNDED');
-      await this.jobs.updateStatus(job.id, 'FUNDED');
+      await this.transitionTo(job.id, 'FUNDED');
       assertTransition('FUNDED', 'SEARCHING');
-      await this.jobs.updateStatus(job.id, 'SEARCHING');
+      await this.transitionTo(job.id, 'SEARCHING');
       await this.notify.record(job.customerId, { title: 'Payment received', body: 'Your payment is held safely in escrow. We’re finding you a rider now.', jobId: job.id });
       await this.announceToOnlineRiders(job.id);
     }
@@ -252,9 +256,9 @@ export class JobsService {
     await this.jobs.setPaymentRefs(job.id, { txId: verified.transactionId });
     if (job.status === 'CREATED') {
       assertTransition('CREATED', 'FUNDED');
-      await this.jobs.updateStatus(job.id, 'FUNDED');
+      await this.transitionTo(job.id, 'FUNDED');
       assertTransition('FUNDED', 'SEARCHING');
-      await this.jobs.updateStatus(job.id, 'SEARCHING');
+      await this.transitionTo(job.id, 'SEARCHING');
       await this.notify.record(job.customerId, { title: 'Payment received', body: 'Your payment is held safely in escrow. We’re finding you a rider now.', jobId: job.id });
       await this.announceToOnlineRiders(job.id);
     }
@@ -308,7 +312,7 @@ export class JobsService {
     if (to === 'AT_PICKUP') throw new BadRequestException('Confirm arrival at pickup with GPS');
     const job = await this.assertAssigned(jobId, riderId);
     assertTransition(job.status, to);
-    await this.jobs.updateStatus(jobId, to);
+    await this.transitionTo(jobId, to);
     return this.mustFind(jobId);
   }
 
@@ -319,7 +323,7 @@ export class JobsService {
     if (!isWithinGeofence(riderPos, job.pickup, this.env.ARRIVAL_RADIUS_M)) {
       throw new BadRequestException('Not within the pickup location');
     }
-    await this.jobs.updateStatus(jobId, 'AT_PICKUP');
+    await this.transitionTo(jobId, 'AT_PICKUP');
     return this.mustFind(jobId);
   }
 
@@ -329,7 +333,7 @@ export class JobsService {
     if (!isWithinGeofence(riderPos, job.dropoff, this.env.ARRIVAL_RADIUS_M)) {
       throw new BadRequestException('Not within the drop location');
     }
-    await this.jobs.updateStatus(jobId, 'ARRIVED');
+    await this.transitionTo(jobId, 'ARRIVED');
     await this.jobs.setArrivedAt(jobId, Date.now()); // start the waiting clock for WAIT-policy metering
     return this.mustFind(jobId);
   }
@@ -381,7 +385,7 @@ export class JobsService {
    */
   private async releaseFullToRider(job: Job, riderId: string): Promise<SettleResult> {
     assertTransition(job.status, 'COMPLETED');
-    await this.jobs.updateStatus(job.id, 'COMPLETED');
+    await this.transitionTo(job.id, 'COMPLETED');
     const riderPayout = await this.payout.getPayout(riderId);
     // Release only the FARE portion here; any pre-charged return reserve is settled separately by
     // the caller (refunded on delivery, or paid to the rider on an actual return).
@@ -419,7 +423,7 @@ export class JobsService {
       },
     });
     assertTransition('COMPLETED', 'RELEASED');
-    await this.jobs.updateStatus(job.id, 'RELEASED');
+    await this.transitionTo(job.id, 'RELEASED');
     // If a waiting fee was funded, release it 100% to the rider on top of the fare (idempotent).
     if (job.waitingFeeMinor && job.waitingTxId) {
       await this.escrow.settleWaitingToRider(job.id, Money.of(job.waitingFeeMinor), riderPayout ?? undefined);
@@ -467,7 +471,7 @@ export class JobsService {
     const amount = accruedWaitingMinor(job.waitStartedAt, Date.now());
     if (amount <= 0) throw new ConflictException('No waiting fee has accrued yet');
     // Keeping the rider waiting resumes the metered wait if we were awaiting a decision.
-    if (job.status === 'AWAITING_RESOLUTION') await this.jobs.updateStatus(jobId, 'WAITING');
+    if (job.status === 'AWAITING_RESOLUTION') await this.transitionTo(jobId, 'WAITING');
     const redirectUrl = `${this.env.WEB_APP_URL}/jobs/${job.id}/track`;
     const email = await this.collectionEmail(job.customerId);
     const { txRef, link } = await this.escrow.beginCollection(job.id, Money.of(amount), email, redirectUrl);
@@ -498,7 +502,7 @@ export class JobsService {
     if (job.status === 'WAITING') return { status: 'WAITING', waitStartedAt: job.waitStartedAt ?? Date.now() };
     assertTransition(job.status, 'WAITING');
     const now = Date.now();
-    await this.jobs.updateStatus(jobId, 'WAITING');
+    await this.transitionTo(jobId, 'WAITING');
     await this.jobs.setWaitStartedAt(jobId, now);
     await this.notify.record(job.customerId, {
       title: 'Rider is waiting', body: 'Your rider is at the drop-off. The first 10 minutes are free while they wait for the recipient.', jobId, urgent: true,
@@ -525,7 +529,7 @@ export class JobsService {
       throw new ConflictException('The 10-minute free grace has not elapsed yet');
     }
     assertTransition('WAITING', 'AWAITING_RESOLUTION');
-    await this.jobs.updateStatus(jobId, 'AWAITING_RESOLUTION');
+    await this.transitionTo(jobId, 'AWAITING_RESOLUTION');
     const quote = this.resolutionQuote(job);
     await this.notify.record(job.customerId, {
       title: 'Action needed: recipient unavailable',
@@ -541,7 +545,7 @@ export class JobsService {
     if (job.customerId !== actorId) throw new ForbiddenException();
     if (job.status !== 'AWAITING_RESOLUTION') throw new ConflictException('This delivery is not awaiting your decision');
     assertTransition('AWAITING_RESOLUTION', 'WAITING');
-    await this.jobs.updateStatus(jobId, 'WAITING');
+    await this.transitionTo(jobId, 'WAITING');
     if (job.riderId) {
       await this.notify.record(job.riderId, {
         title: 'Customer asked you to keep waiting',
@@ -618,7 +622,7 @@ export class JobsService {
   async failedAttempt(riderId: string, jobId: string): Promise<{ status: JobStatus; attemptFeeMinor: number; waitingFeeMinor: number }> {
     const job = await this.assertAssigned(jobId, riderId);
     assertTransition(job.status, 'FAILED_ATTEMPT');
-    await this.jobs.updateStatus(jobId, 'FAILED_ATTEMPT');
+    await this.transitionTo(jobId, 'FAILED_ATTEMPT');
 
     // Fee math is a pure, tested domain function: base attempt fee + metered waiting fee for the
     // WAIT policy (10-min grace, then ₦50/min, capped), and never more than the amount collected.
@@ -724,7 +728,7 @@ export class JobsService {
     const windowMs = this.env.PAYMENT_WINDOW_MINUTES * 60_000;
     if (!isPaymentExpired(job.status, Date.parse(job.createdAt), Date.now(), windowMs)) return job;
     assertTransition('CREATED', 'CANCELLED');
-    await this.jobs.updateStatus(job.id, 'CANCELLED');
+    await this.transitionTo(job.id, 'CANCELLED');
     return { ...job, status: 'CANCELLED' };
   }
 
@@ -733,7 +737,7 @@ export class JobsService {
     if (job.customerId !== actorId) throw new ForbiddenException();
     const policy = cancellationPolicy(job.status);
     if (!policy.allowed) throw new ConflictException('Job can no longer be cancelled');
-    await this.jobs.updateStatus(jobId, 'CANCELLED');
+    await this.transitionTo(jobId, 'CANCELLED');
     if (policy.refundFull) {
       const res = await this.escrow.settle({
         jobId, status: 'CANCELLED', outcome: 'REFUND_FULL', collected: Money.of(job.amountMinor),
@@ -764,14 +768,14 @@ export class JobsService {
     if (!canTransition(job.status, 'DISPUTED')) {
       throw new ConflictException('This delivery can no longer be disputed.');
     }
-    await this.jobs.updateStatus(jobId, 'DISPUTED');
+    await this.transitionTo(jobId, 'DISPUTED');
     return { status: 'DISPUTED' };
   }
 
   async resolveDispute(jobId: string, resolution: Resolution, opts: { riderShareMinor?: number } = {}): Promise<{ status: JobStatus }> {
     const job = await this.mustFind(jobId);
     assertTransition(job.status, 'DISPUTE_RESOLVED');
-    await this.jobs.updateStatus(jobId, 'DISPUTE_RESOLVED');
+    await this.transitionTo(jobId, 'DISPUTE_RESOLVED');
     const riderPayout = await this.payout.getPayout(job.riderId ?? '');
     const res = await this.escrow.settle({
       jobId, status: 'DISPUTE_RESOLVED', outcome: resolutionToSettlement(resolution),
@@ -877,6 +881,25 @@ export class JobsService {
     return mapped.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   async status(jobId: string): Promise<JobStatus> { return (await this.mustFind(jobId)).status; }
+
+  /**
+   * The single place a job's status changes.
+   *
+   * Every transition also appends to the append-only status log, which is what per-stage timings and
+   * the inactivity scan are derived from. Routing all 18 call sites through here means a new flow
+   * cannot forget to record its history — the alternative was 18 chances to miss one.
+   *
+   * The log write is best-effort: timing history is valuable, but it is not worth failing a delivery
+   * over. A missing event degrades a duration, it does not corrupt the job.
+   */
+  private async transitionTo(jobId: string, status: JobStatus): Promise<void> {
+    await this.jobs.updateStatus(jobId, status);
+    try {
+      await this.statusLog.append(jobId, status, Date.now());
+    } catch (e) {
+      this.log.warn(`Status history not recorded for ${jobId} -> ${status}: ${(e as Error).message}`);
+    }
+  }
 
   private async assertAssigned(jobId: string, riderId: string): Promise<Job> {
     const job = await this.mustFind(jobId);

@@ -19,6 +19,9 @@ import { InMemoryRateLimiter } from '../auth/adapters/in-memory.adapters.js';
 import { RedisRateLimiter } from '../auth/adapters/redis-rate-limiter.js';
 import { AuthModule } from '../auth/auth.module.js';
 import { ProfileModule } from '../profile/profile.module.js';
+import { JOB_STATUS_LOG } from './status-log.port.js';
+import { InMemoryJobStatusLog, PrismaJobStatusLog } from './adapters/status-log.adapters.js';
+import { InactivityMonitor } from './inactivity.monitor.js';
 
 const usePg = process.env.DB_DRIVER === 'postgres';
 
@@ -32,6 +35,9 @@ const usePg = process.env.DB_DRIVER === 'postgres';
     { provide: RATE_LIMITER, useClass: usePg ? RedisRateLimiter : InMemoryRateLimiter },
     // Rider payout now reads the rider's own saved (encrypted) bank account.
     { provide: RIDER_PAYOUT, useExisting: AccountRiderPayout },
+    // Append-only status history: powers per-stage timings and the inactivity scan.
+    { provide: JOB_STATUS_LOG, useClass: usePg ? PrismaJobStatusLog : InMemoryJobStatusLog },
+    InactivityMonitor,
   ],
   exports: [JobsService],
 })
