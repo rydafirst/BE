@@ -34,6 +34,8 @@ export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
   private readonly secret: string;
   private readonly webhookSecret: string;
   private readonly base: string;
+  // Comma-separated checkout methods (Flutterwave `payment_options`), or '' to show all enabled.
+  private readonly paymentOptions: string;
   // When a proxy is configured, every Flutterwave request egresses through its dedicated IPv4 (the
   // one whitelisted in the Flutterwave dashboard), so Transfers/payouts are accepted.
   private readonly dispatcher?: RequestInit['dispatcher'];
@@ -42,6 +44,7 @@ export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
     this.secret = env.FLW_SECRET_KEY;
     this.webhookSecret = env.FLW_WEBHOOK_SECRET;
     this.base = env.FLW_BASE_URL;
+    this.paymentOptions = env.FLW_PAYMENT_OPTIONS.trim();
     this.dispatcher = env.FLW_PROXY_URL
       ? (this.buildProxyAgent(env.FLW_PROXY_URL) as unknown as RequestInit['dispatcher'])
       : undefined;
@@ -73,6 +76,9 @@ export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
       customer: { email: p.customerEmail, name: p.customerName ?? 'Customer' },
       customizations: { title: 'Rydafirst', description: `Delivery ${p.jobId}` },
       meta: { jobId: p.jobId },
+      // Restrict the checkout to methods that actually work. Omitted entirely when empty so
+      // Flutterwave falls back to showing every enabled method.
+      ...(this.paymentOptions ? { payment_options: this.paymentOptions } : {}),
     });
     const link = body?.data?.link as string | undefined;
     if (!link) throw new ServiceUnavailableException('No payment link returned');

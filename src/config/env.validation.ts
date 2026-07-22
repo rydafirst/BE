@@ -29,6 +29,12 @@ export const envSchema = z.object({
   // outbound IPv4. Point this at a proxy with a dedicated IPv4 (QuotaGuard/Fixie/self-hosted) and
   // whitelist that proxy IP in Flutterwave. Empty = connect directly (dev / hosts with a static IP).
   FLW_PROXY_URL: z.string().default(''),
+  // Which payment methods the hosted checkout offers, comma-separated (Flutterwave `payment_options`).
+  // Defaults to the methods proven to work on the live account; `banktransfer` is deliberately
+  // EXCLUDED because virtual-account provisioning is broken upstream and returns "invalid charge
+  // request" at checkout. Widen this from the env (add `banktransfer`) once Flutterwave fixes it —
+  // no redeploy needed. Empty string = let Flutterwave show every enabled method (its default).
+  FLW_PAYMENT_OPTIONS: z.string().default('card,ussd,account'),
   WEB_APP_URL: z.string().url().default('http://localhost:3000'),
   PAYMENT_DRIVER: z.enum(['fake', 'flutterwave']).default('fake'),
   // AES-256-GCM key: must decode from base64 to exactly 32 bytes. Validated here so a bad key
