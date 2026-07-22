@@ -148,8 +148,9 @@ export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
   }
 
   verifyWebhookSignature(signatureHeader: string): boolean {
-    const a = Buffer.from(signatureHeader ?? '');
-    const b = Buffer.from(this.webhookSecret);
+    const enc = new TextEncoder();
+    const a = enc.encode(signatureHeader ?? '');
+    const b = enc.encode(this.webhookSecret);
     if (a.length !== b.length) return false;
     return timingSafeEqual(a, b);
   }
