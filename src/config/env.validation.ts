@@ -30,11 +30,10 @@ export const envSchema = z.object({
   // whitelist that proxy IP in Flutterwave. Empty = connect directly (dev / hosts with a static IP).
   FLW_PROXY_URL: z.string().default(''),
   // Which payment methods the hosted checkout offers, comma-separated (Flutterwave `payment_options`).
-  // Defaults to the methods proven to work on the live account; `banktransfer` is deliberately
-  // EXCLUDED because virtual-account provisioning is broken upstream and returns "invalid charge
-  // request" at checkout. Widen this from the env (add `banktransfer`) once Flutterwave fixes it —
-  // no redeploy needed. Empty string = let Flutterwave show every enabled method (its default).
-  FLW_PAYMENT_OPTIONS: z.string().default('card,ussd,account'),
+  // Empty = show EVERY enabled method and let the customer choose — the right default for Nigeria,
+  // where bank transfer is the most-used method. Only set this to restrict methods for a specific
+  // reason (e.g. temporarily hiding a broken one); leave empty otherwise.
+  FLW_PAYMENT_OPTIONS: z.string().default(''),
   WEB_APP_URL: z.string().url().default('http://localhost:3000'),
   PAYMENT_DRIVER: z.enum(['fake', 'flutterwave']).default('fake'),
   // AES-256-GCM key: must decode from base64 to exactly 32 bytes. Validated here so a bad key
@@ -119,6 +118,13 @@ export const envSchema = z.object({
   if (env.PAYMENT_DRIVER === 'flutterwave') {
     if (!env.FLW_SECRET_KEY) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLW_SECRET_KEY'], message: 'required when PAYMENT_DRIVER=flutterwave' });
     if (!env.FLW_WEBHOOK_SECRET) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLW_WEBHOOK_SECRET'], message: 'required when PAYMENT_DRIVER=flutterwave' });
+    // WEB_APP_URL is the address Flutterwave redirects a WEB customer back to after paying. Left at
+    // the localhost dev default in production, every web payment would redirect to an unreachable
+    // page. Refuse to boot so it can't ship silently broken. (Mobile is unaffected — it redirects to
+    // the rydafirst:// deep link, not this URL.)
+    if (/localhost|127\.0\.0\.1/.test(env.WEB_APP_URL)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['WEB_APP_URL'], message: 'must be the real web domain (not localhost) when PAYMENT_DRIVER=flutterwave — it is the post-payment redirect URL' });
+    }
   }
   // Fail-closed: if documents go to R2, all R2 credentials must be present.
   if (env.DOCUMENT_STORE_DRIVER === 'r2') {

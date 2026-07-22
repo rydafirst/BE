@@ -113,10 +113,14 @@ export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
   }
 
   async refund(p: { transactionId: string; amount: Money; reference?: string }): Promise<{ providerRef: string }> {
+    // Flutterwave's refund endpoint takes ONLY `amount` (plus an optional `comments`). It does NOT
+    // accept `reference`, and sending one made it reject the call with a generic
+    // "400: Some error occured" — a regression from the original amount-only body that refunded
+    // successfully. `p.reference` is accepted on the signature for idempotency bookkeeping upstream
+    // but deliberately NOT forwarded to Flutterwave. Idempotency is already enforced by the escrow
+    // layer (a refund leg with a recorded ref is never re-issued).
     const body = await this.call('POST', `/transactions/${encodeURIComponent(p.transactionId)}/refund`, {
       amount: p.amount.amount / 100,
-      // Included for providers/endpoints that honour an idempotency reference; harmless otherwise.
-      ...(p.reference ? { reference: flwReference(p.reference) } : {}),
     });
     return { providerRef: String(body?.data?.id ?? p.transactionId) };
   }
