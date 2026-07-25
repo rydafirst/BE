@@ -819,6 +819,20 @@ export class JobsService {
   /** Jobs whose rider payout still needs a retry (admin finance queue). */
   async listPendingPayouts(limit = 100): Promise<Job[]> { return this.jobs.listPayoutPending(limit); }
 
+  /**
+   * Real, on-demand transfer status for a job's rider payout, read straight from the processor. A
+   * transfer that our side recorded as "accepted" can still be NEW/PENDING or later FAILED at the PSP
+   * (transfers are async) — this surfaces that truth to ops without needing the provider dashboard.
+   */
+  async payoutTransferStatus(jobId: string): Promise<{ jobId: string; payoutRef?: string; status: string; reason?: string }> {
+    const job = await this.mustFind(jobId);
+    if (!job.payoutRef) {
+      return { jobId, status: 'NO_TRANSFER', reason: 'No payout reference recorded for this job yet.' };
+    }
+    const s = await this.escrow.transferStatus(job.payoutRef);
+    return { jobId, payoutRef: job.payoutRef, status: s.status, ...(s.reason ? { reason: s.reason } : {}) };
+  }
+
   /** Customer taps "I'm coming" — nudge the assigned rider that they're on their way to meet them. */
   async notifyRiderComing(actorId: string, jobId: string): Promise<{ ok: boolean }> {
     const job = await this.mustFind(jobId);

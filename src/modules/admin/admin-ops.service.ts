@@ -52,4 +52,9 @@ export class AdminOpsService {
   retryPayout(jobId: string, force = false): Promise<{ payoutPending: boolean; payoutError?: string }> {
     return this.jobs.retryPayout(jobId, force);
   }
+
+  /** Real transfer status for a job's rider payout, read straight from the processor (async at PSP). */
+  transferStatus(jobId: string): Promise<{ jobId: string; payoutRef?: string; status: string; reason?: string }> {
+    return this.jobs.payoutTransferStatus(jobId);
+  }
 }

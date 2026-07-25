@@ -67,6 +67,12 @@ export class AdminController {
     return this.ops.retryPayout(jobId, force === 'true');
   }
 
+  @Get('finance/payouts/:jobId/transfer-status')
+  @RequirePermission('admin:finance:read')
+  transferStatus(@Param('jobId') jobId: string) {
+    return this.ops.transferStatus(jobId);
+  }
+
   @Get('kyc/pending')
   @RequirePermission('admin:kyc:review')
   pendingKyc() {

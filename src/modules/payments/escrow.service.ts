@@ -335,6 +335,11 @@ export class EscrowService {
     };
   }
 
+  /** Real, on-demand status of a transfer at the processor (transfers settle asynchronously). */
+  async transferStatus(providerRef: string): Promise<import('./payment-provider.interface.js').TransferStatus> {
+    return this.provider.getTransfer(providerRef);
+  }
+
   async reconciliationView(): Promise<ReconciliationResult> {
     const ours = await this.ledger.totals();
     const provider = ours; // TODO(integration): fetch Flutterwave settlement report

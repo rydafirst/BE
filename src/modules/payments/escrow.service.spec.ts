@@ -55,6 +55,7 @@ class FailingProvider implements PaymentProvider {
   refundCalls = 0;
   async refund() { this.refundCalls++; return { providerRef: `refund_${this.refundCalls}` }; }
   async resolveAccount() { return { accountName: 'Test' }; }
+  async getTransfer() { return { status: 'SUCCESSFUL' }; }
   verifyWebhookSignature() { return true; }
 }
 
@@ -66,6 +67,7 @@ class OkProvider implements PaymentProvider {
   refundCalls = 0;
   async refund() { this.refundCalls++; return { providerRef: `refund_${this.refundCalls}` }; }
   async resolveAccount() { return { accountName: 'Test' }; }
+  async getTransfer() { return { status: 'SUCCESSFUL' }; }
   verifyWebhookSignature() { return true; }
 }
 
@@ -192,6 +194,7 @@ test('retry after a partial failure re-issues only the failed leg (no double-ref
     }
     async refund() { this.refundCalls++; return { providerRef: `r_${this.refundCalls}` }; }
     async resolveAccount() { return { accountName: 'Test' }; }
+    async getTransfer() { return { status: 'SUCCESSFUL' }; }
     verifyWebhookSignature() { return true; }
   }
   const provider = new TransferFlaky();

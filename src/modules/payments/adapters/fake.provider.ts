@@ -70,6 +70,11 @@ export class FakePaymentProvider implements PaymentProvider, BankDirectory {
     return { providerRef: `fake_refund_${randomUUID().slice(0, 8)}` };
   }
 
+  async getTransfer(idOrReference: string): Promise<import('../payment-provider.interface.js').TransferStatus> {
+    // DEV: fake transfers always report success so local flows look complete.
+    return { status: 'SUCCESSFUL', reason: 'Fake transfer (dev provider)', reference: idOrReference };
+  }
+
   async resolveAccount(p: { bankCode: string; accountNumber: string }): Promise<{ accountName: string }> {
     // DEV: return a deterministic placeholder so the resolve-name flow works without real keys.
     return { accountName: `Test Account ${p.accountNumber.slice(-4)}` };

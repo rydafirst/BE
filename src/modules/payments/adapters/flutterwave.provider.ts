@@ -125,6 +125,20 @@ export class FlutterwaveProvider implements PaymentProvider, BankDirectory {
     return { providerRef: String(body?.data?.id ?? p.transactionId) };
   }
 
+  async getTransfer(idOrReference: string): Promise<import('../payment-provider.interface.js').TransferStatus> {
+    // Flutterwave transfers are queried by their numeric id (returned when the transfer was created).
+    const body = await this.call('GET', `/transfers/${encodeURIComponent(idOrReference)}`);
+    const d = (body?.data ?? {}) as {
+      status?: unknown; complete_message?: unknown; reference?: unknown; amount?: unknown;
+    };
+    return {
+      status: String(d.status ?? 'UNKNOWN').toUpperCase(),
+      ...(d.complete_message ? { reason: String(d.complete_message) } : {}),
+      ...(d.reference ? { reference: String(d.reference) } : {}),
+      ...(typeof d.amount === 'number' ? { amountMinor: Math.round(d.amount * 100) } : {}),
+    };
+  }
+
   async resolveAccount(p: { bankCode: string; accountNumber: string }): Promise<{ accountName: string }> {
     const body = await this.call('POST', '/accounts/resolve', {
       account_number: p.accountNumber,
