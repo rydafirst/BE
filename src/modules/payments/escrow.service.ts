@@ -340,6 +340,38 @@ export class EscrowService {
     return this.provider.getTransfer(providerRef);
   }
 
+  /**
+   * Re-send a rider transfer that FAILED at the processor (e.g. insufficient payout balance when it
+   * first ran). Money-safety is enforced two ways:
+   *   1. We first read the existing transfer's REAL status and only proceed when it is terminal-failed
+   *      — never when it is SUCCESSFUL or still NEW/PENDING — so a rider can't be paid twice.
+   *   2. We re-send the EXACT amount the failed transfer attempted (read back from the processor,
+   *      never re-derived), with a deterministic reference tied to the failed transfer id, so a repeat
+   *      click de-dupes at the processor instead of creating a second transfer.
+   */
+  async resendFailedTransfer(p: { jobId: string; riderPayout: RiderPayout; currentRef: string }): Promise<{
+    outcome: 'RESENT' | 'ALREADY_SUCCESSFUL' | 'IN_FLIGHT' | 'UNKNOWN_AMOUNT';
+    providerStatus: string;
+    newRef?: string;
+    amountMinor?: number;
+  }> {
+    const st = await this.provider.getTransfer(p.currentRef);
+    const status = st.status.toUpperCase();
+    if (status === 'SUCCESSFUL') return { outcome: 'ALREADY_SUCCESSFUL', providerStatus: status };
+    if (status === 'NEW' || status === 'PENDING') return { outcome: 'IN_FLIGHT', providerStatus: status };
+    // Terminal failure. Re-send the same amount the failed transfer carried — never guessed.
+    if (typeof st.amountMinor !== 'number' || st.amountMinor <= 0) {
+      return { outcome: 'UNKNOWN_AMOUNT', providerStatus: status };
+    }
+    const r = await this.provider.transfer({
+      amount: Money.of(st.amountMinor),
+      bankCode: p.riderPayout.bankCode,
+      accountNumber: p.riderPayout.accountNumber,
+      reference: `resend:${p.jobId}:${p.currentRef}`, // deterministic ⇒ a double-click de-dupes at the PSP
+    });
+    return { outcome: 'RESENT', providerStatus: status, newRef: r.providerRef, amountMinor: st.amountMinor };
+  }
+
   async reconciliationView(): Promise<ReconciliationResult> {
     const ours = await this.ledger.totals();
     const provider = ours; // TODO(integration): fetch Flutterwave settlement report

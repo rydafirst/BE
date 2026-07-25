@@ -73,6 +73,12 @@ export class AdminController {
     return this.ops.transferStatus(jobId);
   }
 
+  @Post('finance/payouts/:jobId/resend')
+  @RequirePermission('admin:finance:manage')
+  resendPayout(@Param('jobId') jobId: string) {
+    return this.ops.resendPayout(jobId);
+  }
+
   @Get('kyc/pending')
   @RequirePermission('admin:kyc:review')
   pendingKyc() {

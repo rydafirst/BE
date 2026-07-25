@@ -57,4 +57,9 @@ export class AdminOpsService {
   transferStatus(jobId: string): Promise<{ jobId: string; payoutRef?: string; status: string; reason?: string }> {
     return this.jobs.payoutTransferStatus(jobId);
   }
+
+  /** Re-send a rider payout whose transfer failed at the PSP (safe: only re-sends a confirmed failure). */
+  resendPayout(jobId: string): Promise<{ outcome: string; providerStatus: string; amountMinor?: number }> {
+    return this.jobs.resendFailedPayout(jobId);
+  }
 }

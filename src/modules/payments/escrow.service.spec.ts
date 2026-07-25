@@ -268,3 +268,46 @@ test('retryDisbursement re-attempts the transfer without touching the ledger', a
   assert.ok(res.providerRef.length > 0);
   assert.equal(ledger.entries.length, 0);           // retry does not re-post the ledger
 });
+
+test('re-send only re-issues a transfer that actually FAILED — never a successful or in-flight one', async () => {
+  // Provider whose reported transfer status is fixed, and which counts real transfer attempts. This is
+  // the money-safety contract for the "Re-send failed payout" button: a rider must never be paid twice.
+  class StatusProvider implements PaymentProvider {
+    transferCalls = 0;
+    constructor(private readonly st: string, private readonly amt?: number) {}
+    async initCollection() { return { txRef: 'x', link: 'x' }; }
+    async verifyTransaction() { return { status: 'successful' as const, amountMinor: 0, currency: 'NGN', txRef: '', transactionId: '' }; }
+    async transfer() { this.transferCalls++; return { providerRef: `new_${this.transferCalls}` }; }
+    async refund() { return { providerRef: 'r' }; }
+    async getTransfer() { return { status: this.st, ...(this.amt != null ? { amountMinor: this.amt } : {}) }; }
+    async resolveAccount() { return { accountName: 'Test' }; }
+    verifyWebhookSignature() { return true; }
+  }
+  const rider = { bankCode: '058', accountNumber: '0123456789' };
+  const mk = (p: PaymentProvider) => new EscrowService(p, new FakeLedger(), new FakeIdem(), new FakeInbox());
+
+  // SUCCESSFUL → refuse (re-sending would double-pay).
+  const ok = new StatusProvider('SUCCESSFUL', 30000);
+  const r1 = await mk(ok).resendFailedTransfer({ jobId: 'j', riderPayout: rider, currentRef: '111' });
+  assert.equal(r1.outcome, 'ALREADY_SUCCESSFUL');
+  assert.equal(ok.transferCalls, 0);
+
+  // NEW/PENDING → refuse (still in flight).
+  const pending = new StatusProvider('NEW', 30000);
+  const r2 = await mk(pending).resendFailedTransfer({ jobId: 'j', riderPayout: rider, currentRef: '111' });
+  assert.equal(r2.outcome, 'IN_FLIGHT');
+  assert.equal(pending.transferCalls, 0);
+
+  // FAILED with a known amount → re-send exactly that amount, exactly once.
+  const failed = new StatusProvider('FAILED', 30000);
+  const r3 = await mk(failed).resendFailedTransfer({ jobId: 'j', riderPayout: rider, currentRef: '111' });
+  assert.equal(r3.outcome, 'RESENT');
+  assert.equal(r3.amountMinor, 30000);
+  assert.equal(failed.transferCalls, 1);
+
+  // FAILED but amount unreadable → refuse (never guess an amount to send).
+  const noAmt = new StatusProvider('FAILED');
+  const r4 = await mk(noAmt).resendFailedTransfer({ jobId: 'j', riderPayout: rider, currentRef: '111' });
+  assert.equal(r4.outcome, 'UNKNOWN_AMOUNT');
+  assert.equal(noAmt.transferCalls, 0);
+});

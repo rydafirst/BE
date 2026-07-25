@@ -833,6 +833,23 @@ export class JobsService {
     return { jobId, payoutRef: job.payoutRef, status: s.status, ...(s.reason ? { reason: s.reason } : {}) };
   }
 
+  /**
+   * Re-send a rider payout whose transfer FAILED at the processor (e.g. the payout balance was short
+   * when it first ran). Safe: escrow re-checks the real status and only re-sends a confirmed-failed
+   * transfer, for the exact failed amount. On success the job's payout state is updated to the new ref.
+   */
+  async resendFailedPayout(jobId: string): Promise<{ outcome: string; providerStatus: string; amountMinor?: number }> {
+    const job = await this.mustFind(jobId);
+    if (!job.payoutRef) throw new ConflictException('No transfer on record for this job to re-send.');
+    const riderPayout = job.riderId ? await this.payout.getPayout(job.riderId) : null;
+    if (!riderPayout) throw new ConflictException('Rider has no payout account on file.');
+    const res = await this.escrow.resendFailedTransfer({ jobId, riderPayout, currentRef: job.payoutRef });
+    if (res.outcome === 'RESENT' && res.newRef) {
+      await this.jobs.setPayoutState(jobId, { pending: false, error: null, ref: res.newRef });
+    }
+    return { outcome: res.outcome, providerStatus: res.providerStatus, ...(res.amountMinor ? { amountMinor: res.amountMinor } : {}) };
+  }
+
   /** Customer taps "I'm coming" — nudge the assigned rider that they're on their way to meet them. */
   async notifyRiderComing(actorId: string, jobId: string): Promise<{ ok: boolean }> {
     const job = await this.mustFind(jobId);
