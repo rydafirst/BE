@@ -782,9 +782,13 @@ export class JobsService {
    * Split outcomes (failed-attempt fee, dispute split) are left for manual ops so we never guess an
    * amount and mispay.
    */
-  async retryPayout(jobId: string): Promise<{ payoutPending: boolean; payoutError?: string }> {
+  async retryPayout(jobId: string, force = false): Promise<{ payoutPending: boolean; payoutError?: string }> {
     const job = await this.mustFind(jobId);
-    if (!job.payoutPending) return { payoutPending: false };
+    // Normally we only touch jobs already flagged pending. `force` lets an operator re-drive a specific
+    // job on demand (e.g. to see the exact provider error) even if it isn't flagged — safe because the
+    // disbursement reuses the stable provider reference, so a leg that already succeeded is skipped and
+    // can never double-pay.
+    if (!force && !job.payoutPending) return { payoutPending: false };
 
     let res: SettleResult;
     if (job.status === 'RELEASED') {

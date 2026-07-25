@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { IsBoolean, IsIn, IsOptional } from 'class-validator';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { AdminOpsService } from './admin-ops.service.js';
@@ -61,8 +61,10 @@ export class AdminController {
 
   @Post('finance/payouts/:jobId/retry')
   @RequirePermission('admin:finance:manage')
-  retryPayout(@Param('jobId') jobId: string) {
-    return this.ops.retryPayout(jobId);
+  retryPayout(@Param('jobId') jobId: string, @Query('force') force?: string) {
+    // ?force=true re-drives a job even if it isn't flagged pending, so an operator can trigger a
+    // specific rider transfer and read back the exact provider error. Idempotent — never double-pays.
+    return this.ops.retryPayout(jobId, force === 'true');
   }
 
   @Get('kyc/pending')

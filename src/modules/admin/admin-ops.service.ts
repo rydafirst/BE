@@ -44,8 +44,12 @@ export class AdminOpsService {
     }));
   }
 
-  /** Re-attempt a single stranded payout (idempotent at the PSP; can never double-pay). */
-  retryPayout(jobId: string): Promise<{ payoutPending: boolean; payoutError?: string }> {
-    return this.jobs.retryPayout(jobId);
+  /**
+   * Re-attempt a single payout (idempotent at the PSP; can never double-pay). `force` re-drives a job
+   * even if it isn't currently flagged pending — used to trigger a specific job's rider transfer and
+   * read back the exact provider error for diagnosis.
+   */
+  retryPayout(jobId: string, force = false): Promise<{ payoutPending: boolean; payoutError?: string }> {
+    return this.jobs.retryPayout(jobId, force);
   }
 }
