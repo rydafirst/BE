@@ -7,6 +7,7 @@ import {
   canTransition,
   IllegalTransitionError,
   isDeliveryComplete,
+  isRiderEngaged,
   isTerminal,
   type JobStatus,
 } from './job-state-machine.js';
@@ -79,4 +80,34 @@ test('completeness is not the same as terminality — COMPLETED can still be dis
   assert.ok(isDeliveryComplete('COMPLETED'));
   assert.equal(isTerminal('COMPLETED'), false);
   assert.ok(canTransition('COMPLETED', 'DISPUTED'));
+});
+
+test('a rider is engaged from acceptance through drop-off resolution', () => {
+  const engaged: JobStatus[] = [
+    'ACCEPTED', 'EN_ROUTE_PICKUP', 'AT_PICKUP', 'IN_PROGRESS',
+    'EN_ROUTE_DROP', 'ARRIVED', 'AWAITING_CODE', 'WAITING', 'AWAITING_RESOLUTION',
+  ];
+  for (const s of engaged) assert.ok(isRiderEngaged(s), `${s} must count as engaged`);
+});
+
+test('a rider is NOT engaged before acceptance, once done, or on an off-ramp', () => {
+  // These are the states from which a rider may take a fresh job: nothing they must keep moving.
+  const free: JobStatus[] = [
+    'CREATED', 'FUNDED', 'SEARCHING', 'COMPLETED', 'RELEASED',
+    'CANCELLED', 'FAILED_ATTEMPT', 'DISPUTED', 'DISPUTE_RESOLVED',
+  ];
+  for (const s of free) assert.equal(isRiderEngaged(s), false, `${s} must not block a new job`);
+});
+
+test('engaged and terminal partition every status (no gaps, no overlap)', () => {
+  // Guards against a new status being added without deciding whether it engages the rider.
+  const all: JobStatus[] = [
+    'CREATED', 'FUNDED', 'SEARCHING', 'ACCEPTED', 'EN_ROUTE_PICKUP', 'AT_PICKUP', 'IN_PROGRESS',
+    'EN_ROUTE_DROP', 'ARRIVED', 'AWAITING_CODE', 'WAITING', 'AWAITING_RESOLUTION', 'COMPLETED',
+    'RELEASED', 'CANCELLED', 'FAILED_ATTEMPT', 'DISPUTED', 'DISPUTE_RESOLVED',
+  ];
+  for (const s of all) assert.equal(typeof isRiderEngaged(s), 'boolean', `${s} must be classified`);
+  // A rider is never both "engaged" and "finished" in the same status.
+  assert.equal(isRiderEngaged('COMPLETED'), false);
+  assert.equal(isRiderEngaged('RELEASED'), false);
 });

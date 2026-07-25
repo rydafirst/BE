@@ -7,9 +7,9 @@ import type { Env } from '../../config/env.validation.js';
 import { Money } from '../payments/domain/money.js';
 import { EscrowService, type SettleResult } from '../payments/escrow.service.js';
 import type { VerifiedTxn } from '../payments/payment-provider.interface.js';
-import { assertTransition, canTransition, isDeliveryComplete, type JobStatus } from './domain/job-state-machine.js';
+import { assertTransition, canTransition, isDeliveryComplete, isRiderEngaged, type JobStatus } from './domain/job-state-machine.js';
 import { computeFare, type FareBreakdown } from './domain/fare.js';
-import { haversineMeters, type GeoPoint } from './domain/geo.js';
+import { haversineMeters, isTripTooShort, MIN_TRIP_METERS, type GeoPoint } from './domain/geo.js';
 import { isWithinGeofence } from '../confirmations/domain/geofence.js';
 import { signQuote, verifyQuote } from './domain/quote-token.js';
 import { cancellationPolicy } from './domain/cancellation.js';
@@ -120,6 +120,12 @@ export class JobsService {
   }
 
   quote(dto: QuoteRequestDto): { quoteToken: string; amountMinor: number; currency: 'NGN'; breakdown: FareBreakdown } {
+    // Reject a pickup and drop-off at the same spot (e.g. both set via "use my location"). Otherwise
+    // the trip prices as zero distance and both "navigate" buttons open the same point — the source of
+    // the "drop-off goes to pickup" confusion. Enforced server-side so the client can't bypass it.
+    if (isTripTooShort(dto.pickup, dto.dropoff)) {
+      throw new BadRequestException(`Pickup and drop-off must be at least ${MIN_TRIP_METERS}m apart — choose two different locations.`);
+    }
     const distance = haversineMeters(dto.pickup, dto.dropoff);
     const breakdown = computeFare(dto.type, distance);
     const quoteToken = signQuote(
@@ -265,6 +271,15 @@ export class JobsService {
     if (!(await this.riderAccount.hasAccount(riderId))) {
       throw new ForbiddenException('Add your payout bank account before accepting jobs');
     }
+    // Single active delivery per rider: they must finish or release the job they're on before taking
+    // another. Stops a rider hoarding offers they can't run, and keeps the "resume your active trip"
+    // routing unambiguous (there is at most one). Checked before the claim so we never assign a second
+    // job. (A rider double-tapping two different offers in the same instant is caught by the atomic
+    // claim + this guard; the worst residual case is surfaced in admin, never silent.)
+    const mine = await this.jobs.listByRider(riderId);
+    if (mine.some((j) => isRiderEngaged(j.status))) {
+      throw new ConflictException('Finish or release your current delivery before accepting another');
+    }
     const claimed = await this.jobs.claim(jobId, riderId);
     if (!claimed) throw new ConflictException('Job is no longer available');
     const job = await this.mustFind(jobId);
@@ -308,6 +323,10 @@ export class JobsService {
   /** GPS-verified arrival at the PICKUP (mirrors drop-off arrival). */
   async arriveAtPickup(riderId: string, jobId: string, riderPos: GeoPoint): Promise<Job> {
     const job = await this.assertAssigned(jobId, riderId);
+    // Idempotent: a lost response leaves the app showing the button while the server already advanced,
+    // so a re-tap must return success, not a 409 "AT_PICKUP -> AT_PICKUP". The geofence was already
+    // verified on the transition that first set this state, so re-confirming is safe.
+    if (job.status === 'AT_PICKUP') return job;
     assertTransition(job.status, 'AT_PICKUP');
     if (!isWithinGeofence(riderPos, job.pickup, this.env.ARRIVAL_RADIUS_M)) {
       throw new BadRequestException('Not within the pickup location');
@@ -318,6 +337,11 @@ export class JobsService {
 
   async markArrived(riderId: string, jobId: string, riderPos: GeoPoint): Promise<Job> {
     const job = await this.assertAssigned(jobId, riderId);
+    // Idempotent: same reason as arriveAtPickup — a re-tap after a dropped response (or a stale UI)
+    // must succeed instead of throwing "ARRIVED -> ARRIVED" (409), which is the flood in the logs and
+    // why the rider saw no feedback and kept pressing. Already at/past arrival means the geofence
+    // already passed once; just return the current job.
+    if (['ARRIVED', 'AWAITING_CODE', 'WAITING', 'AWAITING_RESOLUTION'].includes(job.status)) return job;
     assertTransition(job.status, 'ARRIVED');
     if (!isWithinGeofence(riderPos, job.dropoff, this.env.ARRIVAL_RADIUS_M)) {
       throw new BadRequestException('Not within the drop location');

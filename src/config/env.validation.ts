@@ -45,6 +45,13 @@ export const envSchema = z.object({
   HASH_PEPPER: z.string().min(16),
   JOBS_QUOTE_SECRET: z.string().min(16),
   DB_DRIVER: z.enum(['memory', 'postgres']).default('memory'),
+  // Postgres connection-pool tuning, appended to DATABASE_URL at boot (see database/datasource-url.ts).
+  // On shared hosts the DB caps concurrent connections and can briefly stall; these bound our pool so
+  // the DB never refuses connections and a busy moment fails fast & cleanly instead of hanging. Keep
+  // DB_CONNECTION_LIMIT at or below the database plan's own connection cap. An explicit value in
+  // DATABASE_URL overrides these. Defaults are conservative and safe for a single Railway instance.
+  DB_CONNECTION_LIMIT: z.coerce.number().int().positive().default(10),
+  DB_POOL_TIMEOUT: z.coerce.number().int().positive().default(20),
   // 'expo' sends real push notifications via the Expo push service; 'dev' just logs them.
   PUSH_DRIVER: z.enum(['dev', 'expo']).default('dev'),
   // Admin allowlist: comma-separated phone numbers granted ADMIN + all review scopes on login.
@@ -79,6 +86,11 @@ export const envSchema = z.object({
   // reverse geocoding for the mobile app (the key must never ship inside the app, where it can be
   // extracted and abused). Empty in dev falls back to the client's on-device geocoder.
   GOOGLE_MAPS_API_KEY: z.string().default(''),
+  // Road-routing service base URL used SERVER-SIDE to draw the on-map route between two points. Keyless
+  // by default (public OSRM demo server) so nothing secret ships in the app. The public server is
+  // rate-limited and not for heavy production traffic — point this at a self-hosted OSRM (or a keyed
+  // provider behind an adapter) as volume grows; no app change needed.
+  OSRM_BASE_URL: z.string().url().default('https://router.project-osrm.org'),
 
   // --- OTP delivery ---------------------------------------------------------
   // How the login OTP reaches the user. `console` (dev) logs it; `email` sends via Resend;

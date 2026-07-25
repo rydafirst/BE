@@ -1,5 +1,5 @@
 import { Controller, Get, Inject, Query } from '@nestjs/common';
-import { GEO_PROVIDER, type GeoProvider } from './ports.js';
+import { GEO_PROVIDER, ROUTE_PROVIDER, type GeoProvider, type RouteProvider } from './ports.js';
 
 /**
  * Authenticated proxy for address search. Any signed-in user (customer or rider) may call these;
@@ -9,7 +9,10 @@ import { GEO_PROVIDER, type GeoProvider } from './ports.js';
  */
 @Controller({ version: '1' })
 export class GeoController {
-  constructor(@Inject(GEO_PROVIDER) private readonly geo: GeoProvider) {}
+  constructor(
+    @Inject(GEO_PROVIDER) private readonly geo: GeoProvider,
+    @Inject(ROUTE_PROVIDER) private readonly router: RouteProvider,
+  ) {}
 
   @Get('places/autocomplete')
   autocomplete(@Query('input') input = '', @Query('sessiontoken') sessionToken = '') {
@@ -24,5 +27,17 @@ export class GeoController {
   @Get('geo/reverse')
   reverse(@Query('lat') lat = '', @Query('lng') lng = '') {
     return this.geo.reverseGeocode(Number(lat), Number(lng));
+  }
+
+  /** Road-following route between two points, for drawing the on-map trip line. */
+  @Get('geo/route')
+  route(
+    @Query('olat') olat = '', @Query('olng') olng = '',
+    @Query('dlat') dlat = '', @Query('dlng') dlng = '',
+  ) {
+    return this.router.route(
+      { lat: Number(olat), lng: Number(olng) },
+      { lat: Number(dlat), lng: Number(dlng) },
+    );
   }
 }

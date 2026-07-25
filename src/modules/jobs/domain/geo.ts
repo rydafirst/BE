@@ -12,3 +12,16 @@ export function haversineMeters(a: GeoPoint, b: GeoPoint): number {
     Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
   return Math.round(R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s)));
 }
+
+/**
+ * Shortest allowed distance between pickup and drop-off. Generous enough to tolerate GPS drift, but
+ * enough to reject a booking where both ends resolved to the same place (e.g. a customer tapping
+ * "use my location" on both fields) — which otherwise prices as a zero-distance trip and makes both
+ * "navigate" buttons open the same point.
+ */
+export const MIN_TRIP_METERS = 50;
+
+/** True when pickup and drop-off are effectively the same location (below {@link MIN_TRIP_METERS}). */
+export function isTripTooShort(pickup: GeoPoint, dropoff: GeoPoint): boolean {
+  return haversineMeters(pickup, dropoff) < MIN_TRIP_METERS;
+}

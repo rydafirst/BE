@@ -94,3 +94,22 @@ export function isTerminal(status: JobStatus): boolean {
 export function isDeliveryComplete(status: JobStatus): boolean {
   return status === 'COMPLETED' || status === 'RELEASED';
 }
+
+/**
+ * Statuses in which an assigned rider is still on the hook for a delivery — from the moment they
+ * accept until the drop-off is resolved. Used to enforce the single-active-delivery invariant: a
+ * rider may hold at most one engaged job at a time, so they can't hoard offers they can't physically
+ * run, and the app's "resume your active trip" routing always has exactly one job to resume.
+ *
+ * Excludes the done states (COMPLETED/RELEASED) and the off-ramps (CANCELLED/FAILED_ATTEMPT/
+ * DISPUTED/DISPUTE_RESOLVED) — none of those require the rider to keep moving a package. Kept here in
+ * the state machine so the rule has ONE definition the service guard and clients mirror, never a
+ * per-call literal that can drift.
+ */
+const RIDER_ENGAGED: readonly JobStatus[] = [
+  'ACCEPTED', 'EN_ROUTE_PICKUP', 'AT_PICKUP', 'IN_PROGRESS',
+  'EN_ROUTE_DROP', 'ARRIVED', 'AWAITING_CODE', 'WAITING', 'AWAITING_RESOLUTION',
+];
+export function isRiderEngaged(status: JobStatus): boolean {
+  return RIDER_ENGAGED.includes(status);
+}

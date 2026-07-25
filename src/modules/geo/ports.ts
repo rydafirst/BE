@@ -18,3 +18,27 @@ export interface GeoProvider {
   /** Reverse-geocode a GPS fix into a formatted address + locality. */
   reverseGeocode(lat: number, lng: number): Promise<ResolvedPlace>;
 }
+
+/**
+ * Routing provider port — kept separate from {@link GeoProvider} because road routing is a distinct
+ * concern from geocoding (Single Responsibility / Interface Segregation). Bound to an OSRM adapter
+ * today; swapping to a keyed provider (Google Directions, Mapbox, self-hosted OSRM) is an adapter
+ * change only. The app never calls the routing vendor directly — only this server proxies it — so no
+ * routing key can leak from the bundle.
+ */
+export const ROUTE_PROVIDER = Symbol('ROUTE_PROVIDER');
+
+export interface LatLng { lat: number; lng: number }
+export interface RoutePath {
+  /** Ordered polyline from origin to destination, following the road network. */
+  points: LatLng[];
+  distanceMeters: number;
+  durationSeconds: number;
+}
+
+export interface RouteProvider {
+  /** Whether routing is available (a provider is configured). */
+  readonly configured: boolean;
+  /** Road-following route between two points. Throws (503) if the upstream router is unavailable. */
+  route(origin: LatLng, dest: LatLng): Promise<RoutePath>;
+}
