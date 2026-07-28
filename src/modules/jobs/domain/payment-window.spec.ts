@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isPaymentExpired } from './payment-window.js';
+import { isPaymentExpired, canRetryPayment } from './payment-window.js';
+import type { JobStatus } from './job-state-machine.js';
 
 const WINDOW = 20 * 60_000; // 20 minutes
 const NOW = 1_000_000_000_000;
@@ -25,4 +26,11 @@ test('a funded/searching order never expires, however old', () => {
 test('terminal states never expire', () => {
   assert.equal(isPaymentExpired('RELEASED', NOW - 10 * WINDOW, NOW, WINDOW), false);
   assert.equal(isPaymentExpired('CANCELLED', NOW - 10 * WINDOW, NOW, WINDOW), false);
+});
+
+test('re-pay is allowed ONLY for a still-unpaid (CREATED) order — the double-charge guard', () => {
+  assert.equal(canRetryPayment('CREATED'), true);
+  // Anything already funded or past it must be refused, or the customer could be charged twice.
+  const funded: JobStatus[] = ['FUNDED', 'SEARCHING', 'ACCEPTED', 'EN_ROUTE_PICKUP', 'IN_PROGRESS', 'COMPLETED', 'RELEASED', 'CANCELLED'];
+  for (const s of funded) assert.equal(canRetryPayment(s), false, `${s} must not allow re-pay`);
 });

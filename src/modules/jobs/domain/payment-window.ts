@@ -14,3 +14,14 @@ export function isPaymentExpired(
 ): boolean {
   return status === 'CREATED' && nowMs - createdAtMs > windowMs;
 }
+
+/**
+ * Pure rule: a customer may (re-)pay an order ONLY while it is still CREATED — i.e. unfunded on our
+ * side. Once it is FUNDED or beyond, re-issuing a checkout would risk a second charge, so we refuse.
+ * The service checks this AFTER expiring stale orders, so an order past the window reads as CANCELLED
+ * (not CREATED) and is refused too. This is the double-charge guard for the "re-pay without restarting
+ * the trip" flow.
+ */
+export function canRetryPayment(status: JobStatus): boolean {
+  return status === 'CREATED';
+}

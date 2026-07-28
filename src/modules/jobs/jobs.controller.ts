@@ -6,7 +6,7 @@ import { JobDiscoveryService } from './job-discovery.service.js';
 import { JobRatingsService } from './job-ratings.service.js';
 import { JobsService } from './jobs.service.js';
 import { IsInt, IsNumber, IsOptional, IsString, Length, Max, Min } from 'class-validator';
-import { AdvanceDto, ArriveDto, ConfirmPaymentDto, CreateJobDto, QuoteRequestDto } from './dto/jobs.dto.js';
+import { AdvanceDto, ArriveDto, ConfirmPaymentDto, CreateJobDto, QuoteRequestDto, RetryPaymentDto } from './dto/jobs.dto.js';
 
 class RatingDto {
   @IsInt() @Min(1) @Max(5) stars!: number;
@@ -113,6 +113,12 @@ export class JobsController {
     return this.jobs.confirmPayment(user.id, id, dto.transactionId);
   }
 
+  @Post(':id/retry-payment')
+  @RequirePermission('job:read:own')
+  retryPayment(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: RetryPaymentDto) {
+    return this.jobs.retryPayment(user.id, id, dto.returnUrl);
+  }
+
   @Post(':id/cancel')
   @RequirePermission('job:read:own')
   cancel(@CurrentUser() user: AuthUser, @Param('id') id: string) {
@@ -141,13 +147,13 @@ export class JobsController {
   @Post(':id/arrive-pickup')
   @RequirePermission('job:accept')
   arrivePickup(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ArriveDto) {
-    return this.jobs.arriveAtPickup(user.id, id, { lat: dto.lat, lng: dto.lng });
+    return this.jobs.arriveAtPickup(user.id, id, { lat: dto.lat, lng: dto.lng }, dto.accuracyM);
   }
 
   @Post(':id/arrive')
   @RequirePermission('job:accept')
   arrive(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ArriveDto) {
-    return this.jobs.markArrived(user.id, id, { lat: dto.lat, lng: dto.lng });
+    return this.jobs.markArrived(user.id, id, { lat: dto.lat, lng: dto.lng }, dto.accuracyM);
   }
 
   @Post(':id/failed-attempt')

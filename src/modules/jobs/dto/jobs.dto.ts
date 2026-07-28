@@ -45,6 +45,14 @@ export class AdvanceDto {
 export class ArriveDto {
   @IsNumber() @Min(-90) @Max(90) lat!: number;
   @IsNumber() @Min(-180) @Max(180) lng!: number;
+  // Optional GPS accuracy (metres) from the device fix; used to tolerate drift near the geofence.
+  // Bounded server-side (see MAX_GPS_SLACK_M), so a large value can't defeat the fence.
+  @IsOptional() @IsNumber() @Min(0) @Max(100000) accuracyM?: number;
+}
+
+export class RetryPaymentDto {
+  // Optional deep-link the hosted checkout returns to after payment (allow-listed to rydafirst:// server-side).
+  @IsOptional() @IsString() returnUrl?: string;
 }
 
 export class ConfirmPaymentDto {

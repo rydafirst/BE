@@ -10,7 +10,7 @@ import type { VerifiedTxn } from '../payments/payment-provider.interface.js';
 import { assertTransition, canTransition, isDeliveryComplete, isRiderEngaged, type JobStatus } from './domain/job-state-machine.js';
 import { computeFare, type FareBreakdown } from './domain/fare.js';
 import { haversineMeters, isTripTooShort, MIN_TRIP_METERS, type GeoPoint } from './domain/geo.js';
-import { isWithinGeofence } from '../confirmations/domain/geofence.js';
+import { checkArrival } from '../confirmations/domain/geofence.js';
 import { signQuote, verifyQuote } from './domain/quote-token.js';
 import { cancellationPolicy } from './domain/cancellation.js';
 import { canReleaseJob, MAX_RIDER_RELEASES_PER_DAY, RELEASE_WINDOW_SECONDS } from './domain/rider-release.js';
@@ -18,7 +18,7 @@ import { failedAttemptFee } from './domain/failed-attempt-fee.js';
 import { accruedWaitingMinor, computeReturnFareMinor, graceElapsed } from './domain/resolution.js';
 import { decideFunding } from './domain/funding.js';
 import { FARE_CONFIG } from './domain/fare.js';
-import { isPaymentExpired } from './domain/payment-window.js';
+import { isPaymentExpired, canRetryPayment } from './domain/payment-window.js';
 import { resolutionToSettlement, type Resolution } from '../disputes/domain/dispute.js';
 import { JOB_REPO, type Job, type JobRepository } from './ports.js';
 import { RATE_LIMITER, type RateLimiter } from '../auth/ports.js';
@@ -201,6 +201,26 @@ export class JobsService {
     return { ...job, flwTxRef: txRef, paymentLink: link };
   }
 
+  /**
+   * Re-issue a checkout link for an order the customer started but didn't finish paying — WITHOUT
+   * recreating the trip, so their details are reused. Double-charge safe: stale orders are expired
+   * first, then we re-issue ONLY while the order is still CREATED (unfunded on our side). If the first
+   * payment actually landed, the webhook has already moved it to FUNDED, so this refuses and returns
+   * the current status instead of charging again.
+   */
+  async retryPayment(customerId: string, jobId: string, returnUrl?: string): Promise<{ status: JobStatus; paymentLink?: string; flwTxRef?: string }> {
+    const job = await this.getJob(customerId, jobId); // owner/party check (throws if not theirs)
+    const fresh = await this.expireIfStale(job);      // past the window -> CANCELLED, never re-charged
+    if (!canRetryPayment(fresh.status)) return { status: fresh.status };
+    const redirectUrl = returnUrl?.startsWith('rydafirst://')
+      ? returnUrl
+      : `${this.env.WEB_APP_URL}/jobs/${fresh.id}/track`;
+    const email = await this.collectionEmail(customerId);
+    const { txRef, link } = await this.escrow.beginCollection(fresh.id, Money.of(fresh.amountMinor), email, redirectUrl);
+    await this.jobs.setPaymentRefs(fresh.id, { txRef });
+    return { status: 'CREATED', paymentLink: link, flwTxRef: txRef };
+  }
+
   /** Called by the verified payment webhook: confirm funding, open for matching. */
   async confirmFundedByTxRef(verified: VerifiedTxn): Promise<{ funded: boolean }> {
     const job = await this.jobs.findByTxRef(verified.txRef);
@@ -321,21 +341,24 @@ export class JobsService {
   }
 
   /** GPS-verified arrival at the PICKUP (mirrors drop-off arrival). */
-  async arriveAtPickup(riderId: string, jobId: string, riderPos: GeoPoint): Promise<Job> {
+  async arriveAtPickup(riderId: string, jobId: string, riderPos: GeoPoint, accuracyMeters = 0): Promise<Job> {
     const job = await this.assertAssigned(jobId, riderId);
     // Idempotent: a lost response leaves the app showing the button while the server already advanced,
     // so a re-tap must return success, not a 409 "AT_PICKUP -> AT_PICKUP". The geofence was already
     // verified on the transition that first set this state, so re-confirming is safe.
     if (job.status === 'AT_PICKUP') return job;
     assertTransition(job.status, 'AT_PICKUP');
-    if (!isWithinGeofence(riderPos, job.pickup, this.env.ARRIVAL_RADIUS_M)) {
-      throw new BadRequestException('Not within the pickup location');
+    const atPickup = checkArrival(riderPos, job.pickup, this.env.ARRIVAL_RADIUS_M, accuracyMeters);
+    if (!atPickup.ok) {
+      throw new BadRequestException(
+        `You appear to be ${atPickup.distanceMeters}m from the pickup (within ${atPickup.allowedMeters}m required). Move closer or wait for a better GPS signal, then try again.`,
+      );
     }
     await this.transitionTo(jobId, 'AT_PICKUP');
     return this.mustFind(jobId);
   }
 
-  async markArrived(riderId: string, jobId: string, riderPos: GeoPoint): Promise<Job> {
+  async markArrived(riderId: string, jobId: string, riderPos: GeoPoint, accuracyMeters = 0): Promise<Job> {
     const job = await this.assertAssigned(jobId, riderId);
     // Idempotent: same reason as arriveAtPickup — a re-tap after a dropped response (or a stale UI)
     // must succeed instead of throwing "ARRIVED -> ARRIVED" (409), which is the flood in the logs and
@@ -343,8 +366,11 @@ export class JobsService {
     // already passed once; just return the current job.
     if (['ARRIVED', 'AWAITING_CODE', 'WAITING', 'AWAITING_RESOLUTION'].includes(job.status)) return job;
     assertTransition(job.status, 'ARRIVED');
-    if (!isWithinGeofence(riderPos, job.dropoff, this.env.ARRIVAL_RADIUS_M)) {
-      throw new BadRequestException('Not within the drop location');
+    const atDrop = checkArrival(riderPos, job.dropoff, this.env.ARRIVAL_RADIUS_M, accuracyMeters);
+    if (!atDrop.ok) {
+      throw new BadRequestException(
+        `You appear to be ${atDrop.distanceMeters}m from the drop-off (within ${atDrop.allowedMeters}m required). Move closer or wait for a better GPS signal, then try again.`,
+      );
     }
     await this.transitionTo(jobId, 'ARRIVED');
     await this.jobs.setArrivedAt(jobId, Date.now()); // start the waiting clock for WAIT-policy metering
