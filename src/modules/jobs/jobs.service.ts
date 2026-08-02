@@ -35,6 +35,7 @@ import { CUSTOMER_PHOTO, type CustomerPhotoSource } from './customer-photo.port.
 import { CONTACT_CHANNEL, type ContactChannel } from './contact-channel.port.js';
 import { JOB_STATUS_LOG, type JobStatusLog } from './status-log.port.js';
 import { contactAllowed } from './domain/contact-window.js';
+import { CallSessionService } from '../calls/call-session.service.js';
 import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
 
 const QUOTE_TTL_MS = 900_000; // 15 minutes — long enough to read options + pay without the quote going stale
@@ -65,10 +66,11 @@ export class JobsService {
     @Inject(CUSTOMER_PHOTO) private readonly customerPhoto: CustomerPhotoSource,
     @Inject(CONTACT_CHANNEL) private readonly contact: ContactChannel,
     @Inject(JOB_STATUS_LOG) private readonly statusLog: JobStatusLog,
+    private readonly calls: CallSessionService,
   ) {}
 
   /** The customer's name + photo for the assigned rider (party-only, after they're on the job). */
-  async assignedCustomerSummary(riderId: string, jobId: string): Promise<{ name?: string; photoUrl?: string; phone?: string; phoneMasked?: boolean }> {
+  async assignedCustomerSummary(riderId: string, jobId: string): Promise<{ name?: string; photoUrl?: string; phone?: string; phoneMasked?: boolean; callMode?: 'proxy' | 'direct' }> {
     const job = await this.mustFind(jobId);
     if (job.riderId !== riderId) throw new ForbiddenException();
     const photoUrl = await this.customerPhoto.photoUrl(job.customerId);
@@ -87,11 +89,17 @@ export class JobsService {
    * already have been verified as a party to it, and the channel must actually return a number.
    * Omitted entirely rather than returned as null so a phone number never appears in a payload for
    * a job that has ended.
+   *
+   * `callMode` tells the client how to place the call: 'proxy' (masked in-app calling is live — the
+   * client requests a call and the server rings them; NO number is handed out) or 'direct' (fall
+   * back to a `tel:` link with the number below).
    */
-  private async contactFor(job: Job, callerUserId: string, subjectUserId: string): Promise<{ phone?: string; phoneMasked?: boolean }> {
-    if (!contactAllowed(job.status)) return {};
+  private async contactFor(job: Job, callerUserId: string, subjectUserId: string): Promise<{ phone?: string; phoneMasked?: boolean; callMode: 'proxy' | 'direct' }> {
+    if (!contactAllowed(job.status)) return { callMode: 'direct' };
+    // Masked calling on: hand the client the mode only — never the real number.
+    if (this.calls.enabled()) return { callMode: 'proxy' };
     const contact = await this.contact.numberFor({ jobId: job.id, callerUserId, subjectUserId });
-    return contact.number ? { phone: contact.number, phoneMasked: contact.masked } : {};
+    return contact.number ? { phone: contact.number, phoneMasked: contact.masked, callMode: 'direct' } : { callMode: 'direct' };
   }
 
   /**

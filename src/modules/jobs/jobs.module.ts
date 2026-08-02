@@ -25,14 +25,27 @@ import { InactivityMonitor } from './inactivity.monitor.js';
 import { JobTimingsService } from './job-timings.service.js';
 import { JobDiscoveryService } from './job-discovery.service.js';
 import { JobRatingsService } from './job-ratings.service.js';
+import { CallsController } from '../calls/calls.controller.js';
+import { VoiceWebhookController } from '../calls/voice-webhook.controller.js';
+import { CallSessionService } from '../calls/call-session.service.js';
+import { CALL_PROVIDER } from '../calls/call-provider.port.js';
+import { AfricasTalkingCallProvider } from '../calls/adapters/africastalking-call.provider.js';
+import { CALL_SESSION_REPO } from '../calls/call-session.repo.port.js';
+import { InMemoryCallSessionRepo } from '../calls/adapters/in-memory-call-session.repo.js';
+import { PrismaCallSessionRepo } from '../calls/adapters/prisma-call-session.repo.js';
 
 const usePg = process.env.DB_DRIVER === 'postgres';
 
 @Module({
   imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule, DocumentsModule, RatingsModule, SettingsModule, AuthModule, ProfileModule],
-  controllers: [JobsController, WebhooksController],
+  controllers: [JobsController, WebhooksController, CallsController, VoiceWebhookController],
   providers: [
     JobsService,
+    // Masked in-app calling (Africa's Talking). Registered here so it shares this module's single
+    // JOB_REPO / RATE_LIMITER instance; USER_REPO comes from AuthModule.
+    CallSessionService,
+    { provide: CALL_PROVIDER, useClass: AfricasTalkingCallProvider },
+    { provide: CALL_SESSION_REPO, useClass: usePg ? PrismaCallSessionRepo : InMemoryCallSessionRepo },
     { provide: JOB_REPO, useClass: usePg ? PrismaJobRepository : InMemoryJobRepo },
     // Reuse the same rate limiter (Redis in prod) to cap rider job-releases per day.
     { provide: RATE_LIMITER, useClass: usePg ? RedisRateLimiter : InMemoryRateLimiter },

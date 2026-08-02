@@ -102,6 +102,18 @@ export const envSchema = z.object({
   TERMII_SENDER_ID: z.string().default('Rydafirst'),
   TERMII_BASE_URL: z.string().url().default('https://api.ng.termii.com'),
 
+  // --- Voice masking (Africa's Talking) ------------------------------------
+  // In-app calling that hides both parties' real numbers. Masking is active ONLY when the AT
+  // credentials + a voice-enabled number are all set AND VOICE_CALLBACK_SECRET is present; otherwise
+  // the apps fall back to the current direct `tel:` dialing with no behaviour change.
+  AT_USERNAME: z.string().default(''),
+  AT_API_KEY: z.string().default(''),
+  AT_VOICE_NUMBER: z.string().default(''),
+  AT_VOICE_BASE_URL: z.string().url().default('https://voice.africastalking.com'),
+  // Unguessable secret path segment on the AT voice callback URL; only AT (holding the full URL) can
+  // drive a bridge, and it is validated on every callback before any number is dialled.
+  VOICE_CALLBACK_SECRET: z.string().default(''),
+
   // --- Transactional email (Resend) ----------------------------------------
   // If RESEND_API_KEY is set, real emails are sent; otherwise emails log to the console.
   RESEND_API_KEY: z.string().default(''),

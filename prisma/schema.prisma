@@ -347,6 +347,26 @@ model Rating {
   @@index([riderId])
 }
 
+// One masked call between the two parties of a job. Real phone numbers are never stored here —
+// only the two user ids, so a number can be re-derived at bridge time and nothing sensitive is at
+// rest. `providerRef` is Africa's Talking's session id, used to match the voice callback.
+model CallSession {
+  id                 String   @id @default(uuid())
+  jobId              String
+  initiatorUserId    String
+  counterpartyUserId String
+  provider           String   // 'africastalking'
+  providerRef        String?  // AT session id (set once the call is placed)
+  status             String   // PENDING | RINGING | CONNECTED | COMPLETED | FAILED | EXPIRED
+  createdAt          DateTime @default(now())
+  expiresAt          DateTime
+  durationSec        Int?
+  costAmount         String?
+  costCurrency       String?
+  @@index([providerRef])
+  @@index([jobId])
+}
+
 // One row per uploaded rider document (re-uploads bump `version`; prior versions kept for audit).
 model RiderDocument {
   id              String   @id @default(uuid())
