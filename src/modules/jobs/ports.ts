@@ -22,7 +22,7 @@ export interface Job {
   dropoffAddress?: string;
   pickupArea?: string;      // coarse neighbourhood (e.g. "Ikeja") shown in the pre-accept feed
   dropoffArea?: string;
-  recipient?: { name: string; phone: string };
+  recipient?: { name: string; phone?: string }; // phone withheld from the rider until pickup (recipient-visibility.ts)
   item?: string;
   weightGrams?: number;   // approximate item weight (shown to the rider for clarity)
   instructions?: string;

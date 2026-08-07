@@ -1,5 +1,6 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { stageDurations, timeInCurrentStage, totalElapsedMs } from './domain/stage-timing.js';
+import { expectedDropSeconds, isDropLegStage, latenessTier, pickedUpAt, type LatenessTier } from './domain/lateness.js';
 import { JOB_STATUS_LOG, type JobStatusLog } from './status-log.port.js';
 import { JOB_REPO, type JobRepository } from './ports.js';
 import type { JobStatus } from './domain/job-state-machine.js';
@@ -8,6 +9,8 @@ export interface JobTimings {
   stages: Array<{ status: JobStatus; ms: number; open: boolean }>;
   currentStageMs: number;
   totalMs: number;
+  /** Drop-leg countdown, present only once picked up. All server-derived so the client can't be gamed. */
+  drop?: { expectedSec: number; elapsedSec: number; remainingSec: number; lateness: LatenessTier };
 }
 
 /**
@@ -38,10 +41,23 @@ export class JobTimingsService {
     if (job.customerId !== actorId && job.riderId !== actorId) throw new ForbiddenException();
 
     const events = await this.statusLog.list(jobId);
+    const pickup = pickedUpAt(events);
+    let drop: JobTimings['drop'];
+    if (pickup !== undefined && isDropLegStage(job.status)) {
+      const expectedSec = expectedDropSeconds(job.pickup, job.dropoff);
+      const elapsedSec = Math.max(0, (nowMs - pickup) / 1000);
+      drop = {
+        expectedSec,
+        elapsedSec,
+        remainingSec: Math.max(0, expectedSec - elapsedSec),
+        lateness: latenessTier({ expectedSec, elapsedSec }),
+      };
+    }
     return {
       stages: stageDurations(events, nowMs),
       currentStageMs: timeInCurrentStage(events, nowMs),
       totalMs: totalElapsedMs(events, nowMs),
+      ...(drop ? { drop } : {}),
     };
   }
 }

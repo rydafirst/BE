@@ -23,6 +23,18 @@ export function pushPriority(urgent: boolean): 'high' | 'default' {
   return urgent ? 'high' : 'default';
 }
 
+/**
+ * The `data` payload carried alongside a push so the client can react beyond showing a banner:
+ * `jobId` to deep-link, and `alertLevel` to start a bounded persistent alert. Returns undefined when
+ * there is nothing to attach, so a plain notification stays plain.
+ */
+export function buildPushData(opts: { jobId?: string; alertLevel?: 'persistent' }): Record<string, string> | undefined {
+  const data: Record<string, string> = {};
+  if (opts.jobId) data.jobId = opts.jobId;
+  if (opts.alertLevel) data.alertLevel = opts.alertLevel;
+  return Object.keys(data).length > 0 ? data : undefined;
+}
+
 /** Outcome of one dispatch attempt, so callers can log failures and retire dead devices. */
 export interface PushDeliveryReport {
   accepted: number;

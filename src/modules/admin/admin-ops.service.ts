@@ -11,11 +11,12 @@ export class AdminOpsService {
     private readonly escrow: EscrowService,
   ) {}
 
-  async activeJobs(): Promise<{ summary: OpsSummary; jobs: { id: string; status: string; type: string }[] }> {
-    const jobs = await this.jobs.listActiveJobs();
+  async activeJobs(): Promise<{ summary: OpsSummary; lateTotal: number; jobs: { id: string; status: string; type: string; late: boolean }[] }> {
+    const jobs = await this.jobs.listActiveJobsWithLateness();
     return {
       summary: opsSummary(jobs.map((j) => ({ id: j.id, status: j.status }))),
-      jobs: jobs.map((j) => ({ id: j.id, status: j.status, type: j.type })),
+      lateTotal: jobs.reduce((n, j) => n + (j.late ? 1 : 0), 0),
+      jobs: jobs.map((j) => ({ id: j.id, status: j.status, type: j.type, late: j.late })),
     };
   }
 

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { PushDispatcher, PushMessage } from '../ports.js';
 import {
-  EMPTY_REPORT, isValidExpoToken, pushChannel, pushPriority, pushSound, readExpoTickets,
+  EMPTY_REPORT, buildPushData, isValidExpoToken, pushChannel, pushPriority, pushSound, readExpoTickets,
   type PushDeliveryReport,
 } from '../domain/push.js';
 
@@ -9,6 +9,7 @@ const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const BATCH_SIZE = 100; // Expo accepts up to 100 messages per request
 
 function toExpoMessage(m: PushMessage) {
+  const data = buildPushData({ jobId: m.jobId, alertLevel: m.alertLevel });
   return {
     to: m.to,
     title: m.title,
@@ -17,7 +18,7 @@ function toExpoMessage(m: PushMessage) {
     sound: pushSound(m.urgent),
     priority: pushPriority(m.urgent),
     channelId: pushChannel(m.urgent),
-    ...(m.jobId ? { data: { jobId: m.jobId } } : {}),
+    ...(data ? { data } : {}),
   };
 }
 

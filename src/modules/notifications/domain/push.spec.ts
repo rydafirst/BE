@@ -1,9 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidExpoToken, pushChannel, pushPriority, pushSound, readExpoTickets } from './push.js';
+import { buildPushData, isValidExpoToken, pushChannel, pushPriority, pushSound, readExpoTickets } from './push.js';
 
 const A = 'ExponentPushToken[aaaaaaaaaaaaaaaaaaaaaa]';
 const B = 'ExponentPushToken[bbbbbbbbbbbbbbbbbbbbbb]';
+
+test('buildPushData attaches only what is present, or nothing', () => {
+  assert.equal(buildPushData({}), undefined, 'a plain notification carries no data');
+  assert.deepEqual(buildPushData({ jobId: 'j1' }), { jobId: 'j1' });
+  assert.deepEqual(buildPushData({ jobId: 'j1', alertLevel: 'persistent' }), { jobId: 'j1', alertLevel: 'persistent' });
+  assert.deepEqual(buildPushData({ alertLevel: 'persistent' }), { alertLevel: 'persistent' });
+});
 
 test('counts accepted tickets', () => {
   const r = readExpoTickets([A, B], { data: [{ status: 'ok' }, { status: 'ok' }] });

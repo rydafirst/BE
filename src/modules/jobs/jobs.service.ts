@@ -17,6 +17,8 @@ import { canReleaseJob, MAX_RIDER_RELEASES_PER_DAY, RELEASE_WINDOW_SECONDS } fro
 import { failedAttemptFee } from './domain/failed-attempt-fee.js';
 import { accruedWaitingMinor, computeReturnFareMinor, graceElapsed } from './domain/resolution.js';
 import { decideFunding } from './domain/funding.js';
+import { redactRecipientPhoneForRider } from './domain/recipient-visibility.js';
+import { expectedDropSeconds, isDropLegStage, latenessTier, pickedUpAt } from './domain/lateness.js';
 import { FARE_CONFIG } from './domain/fare.js';
 import { isPaymentExpired, canRetryPayment } from './domain/payment-window.js';
 import { resolutionToSettlement, type Resolution } from '../disputes/domain/dispute.js';
@@ -363,6 +365,14 @@ export class JobsService {
       );
     }
     await this.transitionTo(jobId, 'AT_PICKUP');
+    // Persistent alert: the rider is at the door to collect — the sender must come out. This is the
+    // exact moment a forgetful customer keeps a rider waiting, so it keeps ringing (bounded, client
+    // side) until they open the app.
+    await this.notify.record(job.customerId, {
+      title: 'Your rider is here for pickup',
+      body: 'Your rider has arrived to collect the package. Please come out to hand it over.',
+      jobId, urgent: true, alertLevel: 'persistent',
+    });
     return this.mustFind(jobId);
   }
 
@@ -382,6 +392,13 @@ export class JobsService {
     }
     await this.transitionTo(jobId, 'ARRIVED');
     await this.jobs.setArrivedAt(jobId, Date.now()); // start the waiting clock for WAIT-policy metering
+    // Persistent alert: the rider is at the drop-off — the recipient must come out with the code.
+    // Same rationale as pickup arrival; rings until the customer opens the app (bounded client-side).
+    await this.notify.record(job.customerId, {
+      title: 'Your rider has arrived',
+      body: 'Your rider is at the drop-off. Please come out, or send the recipient with the delivery code.',
+      jobId, urgent: true, alertLevel: 'persistent',
+    });
     return this.mustFind(jobId);
   }
 
@@ -711,7 +728,9 @@ export class JobsService {
   async getJob(actorId: string, jobId: string): Promise<Job> {
     const job = await this.mustFind(jobId);
     if (job.customerId !== actorId && job.riderId !== actorId) throw new ForbiddenException();
-    return this.expireIfStale(job);
+    const fresh = await this.expireIfStale(job);
+    // Field-level authz: withhold the recipient's phone from the rider until pickup (IN_PROGRESS+).
+    return redactRecipientPhoneForRider(fresh, actorId === fresh.riderId);
   }
 
   /** The assigned rider's public details (name, vehicle) for the job's customer or rider to see. */
@@ -899,6 +918,24 @@ export class JobsService {
   }
 
   async listActiveJobs(): Promise<Job[]> { return this.jobs.listActive(); }
+
+  /**
+   * Active jobs, each flagged `late` when its drop leg has passed the escalation threshold (2x ETA).
+   * This is the ops side of late-detection: the admin console reads it (pull), computing lateness live
+   * from the same pure `lateness` domain the push monitor uses — no separate ops push channel exists.
+   * Only drop-leg jobs read the status log, so the extra work is bounded to jobs that could be late.
+   */
+  async listActiveJobsWithLateness(nowMs = Date.now()): Promise<Array<Job & { late: boolean }>> {
+    const jobs = await this.jobs.listActive();
+    return Promise.all(jobs.map(async (j) => {
+      if (!isDropLegStage(j.status)) return { ...j, late: false };
+      const events = await this.statusLog.list(j.id);
+      const pickup = pickedUpAt(events);
+      if (pickup === undefined) return { ...j, late: false };
+      const tier = latenessTier({ expectedSec: expectedDropSeconds(j.pickup, j.dropoff), elapsedSec: (nowMs - pickup) / 1000 });
+      return { ...j, late: tier === 'all' };
+    }));
+  }
   async listRecentJobs(limit = 100): Promise<Job[]> { return this.jobs.listRecent(limit); }
   async jobsForRider(riderId: string): Promise<Job[]> { return this.jobs.listByRider(riderId); }
 

@@ -1,6 +1,8 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { JobsService } from '../jobs/jobs.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { sanitizeMessageBody } from './domain/message.js';
+import { chatCounterparty, chatNotification } from './domain/notify.js';
 import { MESSAGE_REPO, REPORT_REPO, type ChatMessage, type MessageRepo, type MessageReport, type ReportRepo } from './ports.js';
 
 const HISTORY_LIMIT = 200;
@@ -17,6 +19,7 @@ export class ChatService {
     @Inject(MESSAGE_REPO) private readonly repo: MessageRepo,
     @Inject(REPORT_REPO) private readonly reports: ReportRepo,
     private readonly jobs: JobsService,
+    private readonly notify: NotificationsService,
   ) {}
 
   async list(actorId: string, jobId: string): Promise<ChatMessage[]> {
@@ -25,14 +28,24 @@ export class ChatService {
   }
 
   async post(actorId: string, jobId: string, rawBody: unknown): Promise<ChatMessage> {
-    await this.jobs.getJob(actorId, jobId); // authorises (party-only) or throws
+    const job = await this.jobs.getJob(actorId, jobId); // authorises (party-only) or throws
     let body: string;
     try {
       body = sanitizeMessageBody(rawBody);
     } catch (e) {
       throw new BadRequestException(e instanceof Error ? e.message : 'Invalid message');
     }
-    return this.repo.add({ jobId, senderId: actorId, body });
+    const msg = await this.repo.add({ jobId, senderId: actorId, body });
+
+    // Tell the *other* party a message arrived. Best-effort and fail-closed: a push failure must
+    // never fail the send, and the counterparty is derived server-side (the IDOR guard) so we can
+    // only ever notify the one other participant. The push carries no message text.
+    const counterparty = chatCounterparty(job, actorId);
+    if (counterparty) {
+      try { await this.notify.record(counterparty, { ...chatNotification(), jobId, urgent: true }); }
+      catch { /* notifications are best-effort — the message is already stored */ }
+    }
+    return msg;
   }
 
   /**

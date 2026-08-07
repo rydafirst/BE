@@ -45,6 +45,8 @@ export interface PushMessage {
   body: string;
   urgent: boolean;   // urgent → play a sound (like Uber); otherwise silent banner
   jobId?: string;
+  /** 'persistent' → the client keeps alerting (bounded) until the user opens the app (see urgentAlert). */
+  alertLevel?: 'persistent';
 }
 /**
  * Delivers push messages to devices (Expo push service in prod; a dev logger otherwise).
