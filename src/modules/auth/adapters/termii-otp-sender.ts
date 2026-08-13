@@ -33,8 +33,12 @@ export class TermiiOtpSender implements OtpSender {
         }),
       });
       if (!res.ok) {
-        // Log status only — never log the code or full provider response (may echo the message).
-        this.log.error(`Termii send failed: HTTP ${res.status}`);
+        // Termii's error body is ITS OWN status message (e.g. "Invalid Sender Id", "Insufficient balance",
+        // "Invalid API Key") — it never contains our OTP code, so it is safe to log and is exactly what we
+        // need to diagnose a delivery failure. Truncated defensively.
+        let detail = '';
+        try { detail = (await res.text()).slice(0, 300); } catch { /* body unreadable — status alone */ }
+        this.log.error(`Termii send failed: HTTP ${res.status} ${detail}`);
         throw new ServiceUnavailableException('Could not send verification code, please try again');
       }
     } catch (err) {
