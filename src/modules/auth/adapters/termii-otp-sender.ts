@@ -29,7 +29,7 @@ export class TermiiOtpSender implements OtpSender {
           from: this.env.TERMII_SENDER_ID,
           sms: `Your Rydafirst code is ${code}. It expires shortly. Do not share it with anyone.`,
           type: 'plain',
-          channel: 'generic',
+          channel: this.env.TERMII_CHANNEL, // 'dnd' for NG — 'generic' is often not enabled (422)
           api_key: this.env.TERMII_API_KEY,
         }),
       });

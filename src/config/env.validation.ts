@@ -107,6 +107,10 @@ export const envSchema = z.object({
   // the approved transactional ID. Override per environment via TERMII_SENDER_ID.
   TERMII_SENDER_ID: z.string().default('OE Alert'),
   TERMII_BASE_URL: z.string().url().default('https://api.ng.termii.com'),
+  // Termii delivery route. Nigerian numbers are mostly on Do-Not-Disturb, so the `dnd` route is the
+  // one that actually delivers OTP (the `generic` route is often not enabled for NG workspaces and
+  // returns a 422 "route not configured"). Change only if Termii tells you a different route is enabled.
+  TERMII_CHANNEL: z.enum(['dnd', 'generic', 'whatsapp']).default('dnd'),
   // Africa's Talking SMS (reuses AT_USERNAME/AT_API_KEY from voice masking below). Sender ID is
   // optional — leave empty to send from AT's shared shortcode until a branded ID is approved.
   AT_SMS_SENDER_ID: z.string().default(''),
