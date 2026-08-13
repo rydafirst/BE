@@ -1,5 +1,6 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import type { Env } from '../../../config/env.validation.js';
+import { toNgE164 } from '../../../common/phone.js';
 import type { OtpSender } from '../ports.js';
 
 /**
@@ -18,9 +19,8 @@ export class AfricasTalkingOtpSender implements OtpSender {
   constructor(private readonly env: Env) {}
 
   async send(phone: string, code: string): Promise<void> {
-    // AT wants E.164 with a leading '+'. Normalise digits, then prepend '+'.
-    const digits = phone.replace(/[^\d]/g, '');
-    const to = `+${digits}`;
+    // AT wants E.164 with a leading '+' (e.g. +23480…), not local 080…
+    const to = `+${toNgE164(phone)}`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {

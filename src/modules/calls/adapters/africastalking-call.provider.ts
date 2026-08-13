@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ENV } from '../../../config/config.module.js';
 import type { Env } from '../../../config/env.validation.js';
+import { toNgE164 } from '../../../common/phone.js';
 import type { CallProvider, PlaceCallResult } from '../call-provider.port.js';
 
 interface AtCallResponse {
@@ -39,7 +40,8 @@ export class AfricasTalkingCallProvider implements CallProvider {
   }
 
   async placeCall({ to, clientRequestId }: { to: string; clientRequestId: string }): Promise<PlaceCallResult> {
-    const body = new URLSearchParams({ username: this.username, from: this.from, to, clientRequestId });
+    const dial = `+${toNgE164(to)}`; // AT wants E.164 with '+'; normalise local 080… -> +23480…
+    const body = new URLSearchParams({ username: this.username, from: this.from, to: dial, clientRequestId });
     let json: AtCallResponse = {};
     try {
       const res = await fetch(`${this.base}/call`, {

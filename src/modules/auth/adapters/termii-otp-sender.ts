@@ -1,6 +1,7 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ENV } from '../../../config/config.module.js';
 import type { Env } from '../../../config/env.validation.js';
+import { toNgE164 } from '../../../common/phone.js';
 import type { OtpSender } from '../ports.js';
 
 /**
@@ -15,7 +16,7 @@ export class TermiiOtpSender implements OtpSender {
   constructor(private readonly env: Env) {}
 
   async send(phone: string, code: string): Promise<void> {
-    const to = phone.replace(/[^\d]/g, ''); // Termii wants digits only, international format
+    const to = toNgE164(phone); // Termii wants international digits (234…), not local 080…
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {

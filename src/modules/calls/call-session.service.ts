@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { BadGatewayException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ENV } from '../../config/config.module.js';
 import type { Env } from '../../config/env.validation.js';
+import { toNgE164 } from '../../common/phone.js';
 import { JOB_REPO, type JobRepository } from '../jobs/ports.js';
 import { contactAllowed } from '../jobs/domain/contact-window.js';
 import { USER_REPO, RATE_LIMITER, type UserRepository, type RateLimiter } from '../auth/ports.js';
@@ -118,7 +119,7 @@ export class CallSessionService {
     }
 
     await this.sessions.setStatus(session.id, 'CONNECTED');
-    return buildDialXml(toNumber, callerId, CALL_MAX_SECONDS);
+    return buildDialXml(`+${toNgE164(toNumber)}`, callerId, CALL_MAX_SECONDS); // AT dials E.164 (+23480…)
   }
 
   /** Provider's final callback (isActive=0): record duration/cost and close the session. */
