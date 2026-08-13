@@ -10,6 +10,7 @@ import {
 import { PrismaOtpRepo, PrismaRefreshRepo, PrismaUserRepo } from './adapters/prisma.adapters.js';
 import { RedisRateLimiter } from './adapters/redis-rate-limiter.js';
 import { TermiiOtpSender } from './adapters/termii-otp-sender.js';
+import { AfricasTalkingOtpSender } from './adapters/africas-talking-otp-sender.js';
 import { UserCustomerEmail } from './adapters/user-customer-email.js';
 import { CUSTOMER_EMAIL } from '../jobs/customer-email.port.js';
 import { DirectContactChannel } from './adapters/direct-contact-channel.js';
@@ -31,9 +32,15 @@ const usePg = process.env.DB_DRIVER === 'postgres';
     { provide: RATE_LIMITER, useClass: usePg ? RedisRateLimiter : InMemoryRateLimiter },
     { provide: TOKEN_SIGNER, useClass: DevTokenSigner },
     {
-      // OTP delivery: real SMS via Termii when OTP_CHANNEL=sms, else the dev console sender.
+      // OTP delivery: real SMS when OTP_CHANNEL=sms (Termii or Africa's Talking per SMS_PROVIDER),
+      // else the dev console sender. Email delivery is handled separately in AuthService.
       provide: OTP_SENDER,
-      useFactory: (env: Env) => (env.OTP_CHANNEL === 'sms' ? new TermiiOtpSender(env) : new DevOtpSender()),
+      useFactory: (env: Env) => {
+        if (env.OTP_CHANNEL !== 'sms') return new DevOtpSender();
+        return env.SMS_PROVIDER === 'africastalking'
+          ? new AfricasTalkingOtpSender(env)
+          : new TermiiOtpSender(env);
+      },
       inject: [ENV],
     },
     // Customer email lookup for payment receipts, shared with the jobs module.

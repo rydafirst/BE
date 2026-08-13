@@ -94,13 +94,23 @@ export const envSchema = z.object({
 
   // --- OTP delivery ---------------------------------------------------------
   // How the login OTP reaches the user. `console` (dev) logs it; `email` sends via Resend;
-  // `sms` sends via Termii (blocked pending business registration).
+  // `sms` sends the code by text — the primary channel now that our Termii sender ID is approved.
   OTP_CHANNEL: z.enum(['console', 'sms', 'email']).default('console'),
+  // Which SMS gateway delivers the code when OTP_CHANNEL=sms. `termii` (default, Nigeria-focused,
+  // sender ID approved) or `africastalking` (alternate/fallback gateway). Nothing else changes when
+  // you switch — the auth flow talks to a single OtpSender port.
+  SMS_PROVIDER: z.enum(['termii', 'africastalking']).default('termii'),
   // Max OTP code requests per phone per hour. Raise while testing (e.g. 100); keep low in production.
   OTP_REQUESTS_PER_HOUR: z.coerce.number().int().positive().default(5),
   TERMII_API_KEY: z.string().default(''),
-  TERMII_SENDER_ID: z.string().default('Rydafirst'),
+  // The APPROVED Termii sender ID. Our brand-name request ("rydafirst") was declined, so we send on
+  // the approved transactional ID. Override per environment via TERMII_SENDER_ID.
+  TERMII_SENDER_ID: z.string().default('OE Alert'),
   TERMII_BASE_URL: z.string().url().default('https://api.ng.termii.com'),
+  // Africa's Talking SMS (reuses AT_USERNAME/AT_API_KEY from voice masking below). Sender ID is
+  // optional — leave empty to send from AT's shared shortcode until a branded ID is approved.
+  AT_SMS_SENDER_ID: z.string().default(''),
+  AT_SMS_BASE_URL: z.string().url().default('https://api.africastalking.com'),
 
   // --- Voice masking (Africa's Talking) ------------------------------------
   // In-app calling that hides both parties' real numbers. Masking is active ONLY when the AT
@@ -156,9 +166,15 @@ export const envSchema = z.object({
       if (!env[k]) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [k], message: 'required when DOCUMENT_STORE_DRIVER=r2' });
     }
   }
-  // Fail-closed: if OTPs go out over SMS, the Termii key must be present.
-  if (env.OTP_CHANNEL === 'sms' && !env.TERMII_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TERMII_API_KEY'], message: 'required when OTP_CHANNEL=sms' });
+  // Fail-closed: if OTPs go out over SMS, the selected gateway's credentials must be present.
+  if (env.OTP_CHANNEL === 'sms') {
+    if (env.SMS_PROVIDER === 'termii' && !env.TERMII_API_KEY) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TERMII_API_KEY'], message: 'required when OTP_CHANNEL=sms and SMS_PROVIDER=termii' });
+    }
+    if (env.SMS_PROVIDER === 'africastalking') {
+      if (!env.AT_USERNAME) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['AT_USERNAME'], message: 'required when OTP_CHANNEL=sms and SMS_PROVIDER=africastalking' });
+      if (!env.AT_API_KEY) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['AT_API_KEY'], message: 'required when OTP_CHANNEL=sms and SMS_PROVIDER=africastalking' });
+    }
   }
   // Fail-closed: reviewer login must have BOTH a phone and a fixed 4-8 digit code, or neither.
   const reviewPhoneSet = env.REVIEW_LOGIN_PHONE.length > 0;
