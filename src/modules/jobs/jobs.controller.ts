@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decorator.js';
 import { JobTimingsService } from './job-timings.service.js';
@@ -20,6 +20,14 @@ class ReturnDto {
 class RiderLocationDto {
   @IsOptional() @IsNumber() @Min(-90) @Max(90) lat?: number;
   @IsOptional() @IsNumber() @Min(-180) @Max(180) lng?: number;
+}
+
+// #4 MULTI-STOP: the rider confirms an extra drop-off with its recipient's code + a GPS fix at the stop.
+class ConfirmStopDto {
+  @IsString() @Length(4, 8) code!: string;
+  @IsNumber() @Min(-90) @Max(90) lat!: number;
+  @IsNumber() @Min(-180) @Max(180) lng!: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(100000) accuracyM?: number;
 }
 
 @Controller({ path: 'jobs', version: '1' })
@@ -160,6 +168,20 @@ export class JobsController {
   @RequirePermission('job:accept')
   failedAttempt(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.jobs.failedAttempt(user.id, id);
+  }
+
+  // ---- Rider: multi-stop — confirm an EXTRA drop-off (index is 0-based within extraStops) ----
+  // The primary drop-off still uses POST :id/confirm-code; extra stops are confirmed in order after it,
+  // and only the FINAL stop's confirmation releases escrow to the rider.
+  @Post(':id/stops/:index/confirm-code')
+  @RequirePermission('job:accept')
+  confirmStop(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('index', ParseIntPipe) index: number,
+    @Body() dto: ConfirmStopDto,
+  ) {
+    return this.jobs.confirmStop(user.id, id, index, dto.code, { lat: dto.lat, lng: dto.lng }, dto.accuracyM);
   }
 
   // ---- Rider: recipient unavailable — start the free 10-min wait, then escalate for resolution ----

@@ -81,6 +81,17 @@ export const envSchema = z.object({
   // default to tolerate urban GPS drift; tighten only if you see abuse.
   ARRIVAL_RADIUS_M: z.coerce.number().int().positive().default(120),
 
+  // #0 DIRECT DELIVERY: the single switch for the delivery model — flip it, don't hunt code.
+  //   'direct'   (default, launch behaviour) — a plain point-to-point trip: book -> pay (escrow) ->
+  //              pickup -> deliver -> recipient enters the confirmation code -> escrow releases to the
+  //              rider (platform fee retained). There is NO forced Wait/Delegate/Return choice, NO
+  //              waiting-fee timer and NO return deposit; if the receiver is unavailable the parties
+  //              simply call/chat. Anyone holding the recipient code may receive it (delegate-style).
+  //   'fallback' — restores the original "receiver unavailable" machinery (Wait / Delegate / Return,
+  //              metered waiting fees, the 75% return-deposit pre-charge and the failed-attempt fee).
+  // Fully reversible: nothing is deleted, only guarded behind this flag (see jobs.service.ts markers).
+  DELIVERY_MODE: z.enum(['direct', 'fallback']).default('direct'),
+
   // --- Maps / address search -----------------------------------------------
   // Google Maps Web Service key, used SERVER-SIDE only to proxy Places autocomplete/details and
   // reverse geocoding for the mobile app (the key must never ship inside the app, where it can be

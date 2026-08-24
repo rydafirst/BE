@@ -29,6 +29,7 @@ import { JobRatingsService } from './job-ratings.service.js';
 import { CallsController } from '../calls/calls.controller.js';
 import { VoiceWebhookController } from '../calls/voice-webhook.controller.js';
 import { CallSessionService } from '../calls/call-session.service.js';
+import { HmacHasher } from '../../common/security/hmac-hasher.js';
 import { CALL_PROVIDER } from '../calls/call-provider.port.js';
 import { AfricasTalkingCallProvider } from '../calls/adapters/africastalking-call.provider.js';
 import { CALL_SESSION_REPO } from '../calls/call-session.repo.port.js';
@@ -42,6 +43,8 @@ const usePg = process.env.DB_DRIVER === 'postgres';
   controllers: [JobsController, WebhooksController, CallsController, VoiceWebhookController],
   providers: [
     JobsService,
+    // #4 MULTI-STOP: peppered hashing for per-stop confirmation codes (JobsService dependency).
+    HmacHasher,
     // Masked in-app calling (Africa's Talking). Registered here so it shares this module's single
     // JOB_REPO / RATE_LIMITER instance; USER_REPO comes from AuthModule.
     CallSessionService,

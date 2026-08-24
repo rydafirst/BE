@@ -41,7 +41,10 @@ export class PrismaJobStatusLog implements JobStatusLog {
   constructor(private readonly db: PrismaService) {}
 
   async append(jobId: string, status: JobStatus, atMs: number): Promise<void> {
-    await this.db.jobStatusEvent.create({ data: { jobId, status, at: new Date(atMs) } });
+    // `status` is cast because the EN_ROUTE_STOP enum value (migration 20260722000000_job_multi_stop)
+    // is only known to the generated client after `prisma generate`, which runs on deploy but is
+    // blocked in this sandbox. The runtime value is a valid enum member.
+    await this.db.jobStatusEvent.create({ data: { jobId, status: status as string, at: new Date(atMs) } as never });
   }
 
   async list(jobId: string): Promise<StatusEvent[]> {

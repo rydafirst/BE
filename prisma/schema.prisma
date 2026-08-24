@@ -65,6 +65,7 @@ enum JobStatus {
   AWAITING_CODE
   WAITING
   AWAITING_RESOLUTION
+  EN_ROUTE_STOP
   COMPLETED
   RELEASED
   CANCELLED
@@ -179,6 +180,10 @@ model Job {
   waitingTxId     String?
   waitingFeeMinor Int?
   returnReserveMinor Int?
+  // #4 MULTI-STOP: ordered extra drop-offs (each with recipient, hashed per-stop code, PENDING/
+  // DELIVERED status) as JSON; and the moment the primary drop-off was delivered on a multi-stop job.
+  extraStops      Json?
+  primaryStopDeliveredAt DateTime?
   createdAt       DateTime  @default(now())
 
   events          JobEvent[]
@@ -215,6 +220,35 @@ model MessageReport {
   createdAt  DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// A support conversation (launch #5/#6). Automated bot funnel first, then human agent hand-off.
+// `jobId` is set for per-trip support threads (#6); null for a general Profile support chat (#5).
+model SupportThread {
+  id                String   @id @default(uuid())
+  userId            String
+  jobId             String?
+  category          String   // PAYMENT | DELIVERY_ISSUE | CONDUCT | ACCOUNT | APP_ISSUE | OTHER
+  status            String   // BOT | AWAITING_AGENT | AGENT_JOINED | RESOLVED
+  agentId           String?
+  agentJoinDeadline BigInt?  // epoch ms — 30-min SLA for an agent to join, set on escalation
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// One line in a support thread. `sender` is USER | BOT | AGENT; `senderId` is absent for the bot.
+model SupportMessage {
+  id        String   @id @default(uuid())
+  threadId  String
+  sender    String   // USER | BOT | AGENT
+  senderId  String?
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([threadId])
 }
 
 // Append-only job timeline (evidence + audit).

@@ -1,5 +1,6 @@
 import {
   BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { ENV } from '../../config/config.module.js';
@@ -9,8 +10,14 @@ import { EscrowService, type SettleResult } from '../payments/escrow.service.js'
 import type { VerifiedTxn } from '../payments/payment-provider.interface.js';
 import { assertTransition, canTransition, isDeliveryComplete, isRiderEngaged, type JobStatus } from './domain/job-state-machine.js';
 import { computeFare, type FareBreakdown } from './domain/fare.js';
-import { haversineMeters, isTripTooShort, MIN_TRIP_METERS, type GeoPoint } from './domain/geo.js';
+import { haversineMeters, isTripTooShort, MIN_TRIP_METERS, routeDistanceMeters, type GeoPoint } from './domain/geo.js';
+import {
+  allExtraStopsDelivered, hasExtraStops, MAX_EXTRA_STOPS, nextPendingStopIndex,
+  redactExtraStopsForViewer, type ExtraStop,
+} from './domain/multi-stop.js';
 import { checkArrival } from '../confirmations/domain/geofence.js';
+import { checkCode, generateCode, type CodeRecord } from '../confirmations/domain/confirmation-code.js';
+import { HmacHasher } from '../../common/security/hmac-hasher.js';
 import { signQuote, verifyQuote } from './domain/quote-token.js';
 import { cancellationPolicy } from './domain/cancellation.js';
 import { canReleaseJob, MAX_RIDER_RELEASES_PER_DAY, RELEASE_WINDOW_SECONDS } from './domain/rider-release.js';
@@ -43,7 +50,10 @@ import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
 const QUOTE_TTL_MS = 900_000; // 15 minutes — long enough to read options + pay without the quote going stale
 const PROGRESS_STEPS: readonly JobStatus[] = ['EN_ROUTE_PICKUP', 'AT_PICKUP', 'IN_PROGRESS', 'EN_ROUTE_DROP'];
 
-export type CreatedJob = Job & { paymentLink: string };
+// #4 MULTI-STOP: `extraStopCodes` carries the plaintext single-use codes for each extra drop-off,
+// returned ONLY here to the booking customer (who distributes them to each recipient) — the same DEV/
+// push model as the primary delivery code. They are never stored in plaintext or re-exposed on reads.
+export type CreatedJob = Job & { paymentLink: string; extraStopCodes?: string[] };
 // The rider job board moved to JobDiscoveryService; re-exported so existing imports keep working.
 export type { AvailableJob } from './job-discovery.service.js';
 
@@ -69,7 +79,35 @@ export class JobsService {
     @Inject(CONTACT_CHANNEL) private readonly contact: ContactChannel,
     @Inject(JOB_STATUS_LOG) private readonly statusLog: JobStatusLog,
     private readonly calls: CallSessionService,
+    // #4 MULTI-STOP: peppered hashing for per-stop confirmation codes (same primitive the primary
+    // delivery code uses in ConfirmationService). Optional so the few tests/scripts that construct
+    // JobsService without a hasher keep working — a hasher is only ever needed by the multi-stop path.
+    private readonly hasher: HmacHasher = new HmacHasher(env),
   ) {}
+
+  /**
+   * #0 DIRECT DELIVERY: true when the platform runs plain, direct trips (the launch default,
+   * DELIVERY_MODE='direct'). In this mode the "receiver unavailable" machinery — Wait / Delegate /
+   * Return, metered waiting fees, the return-deposit pre-charge and the failed-attempt fee — is OFF;
+   * if the receiver isn't around the parties just call/chat. Set DELIVERY_MODE='fallback' to restore
+   * the old behaviour. Kept as ONE decision point so the whole feature is a config flip, not a code
+   * hunt (SOLID: the policy lives behind this flag + assertFallbackMode, not scattered conditionals).
+   */
+  private get directMode(): boolean {
+    return this.env.DELIVERY_MODE === 'direct';
+  }
+
+  /**
+   * #0 DIRECT DELIVERY: reject a fallback-only action (waiting fee / return / failed-attempt) while
+   * running in direct mode. Returns a clear 409 so the client shows "not available", never a 500, and
+   * — critically — no money path is opened: escrow can still ONLY release via the funded, code-verified
+   * completeDelivery path.
+   */
+  private assertFallbackMode(): void {
+    if (this.directMode) {
+      throw new ConflictException('Not available in direct delivery mode — reach the recipient by call or chat.');
+    }
+  }
 
   /** The customer's name + photo for the assigned rider (party-only, after they're on the job). */
   async assignedCustomerSummary(riderId: string, jobId: string): Promise<{ name?: string; photoUrl?: string; phone?: string; phoneMasked?: boolean; callMode?: 'proxy' | 'direct' }> {
@@ -136,10 +174,28 @@ export class JobsService {
     if (isTripTooShort(dto.pickup, dto.dropoff)) {
       throw new BadRequestException(`Pickup and drop-off must be at least ${MIN_TRIP_METERS}m apart — choose two different locations.`);
     }
-    const distance = haversineMeters(dto.pickup, dto.dropoff);
+    // #4 MULTI-STOP: the ordered route is pickup -> dropoff -> extra stops. Reject a zero-length leg
+    // (two consecutive points at the same spot) the same way single-stop rejects pickup==dropoff, so a
+    // stop can never price as a free leg. Points are normalised to {lat,lng} for a stable signature.
+    const stops = (dto.stops ?? []).map((s) => ({ lat: s.lat, lng: s.lng }));
+    if (stops.length > MAX_EXTRA_STOPS) throw new BadRequestException(`At most ${MAX_EXTRA_STOPS} extra stops are allowed.`);
+    const routePoints: GeoPoint[] = [dto.pickup, dto.dropoff, ...stops];
+    for (let i = 1; i < routePoints.length; i++) {
+      if (isTripTooShort(routePoints[i - 1]!, routePoints[i]!)) {
+        throw new BadRequestException(`Each stop must be at least ${MIN_TRIP_METERS}m from the previous one — choose distinct locations.`);
+      }
+    }
+    // Price the FULL multi-leg route, never a single leg — a 3-drop job costs the whole path.
+    const distance = routeDistanceMeters(routePoints);
     const breakdown = computeFare(dto.type, distance);
     const quoteToken = signQuote(
-      { type: dto.type, amountMinor: breakdown.totalMinor, currency: 'NGN', pickup: dto.pickup, dropoff: dto.dropoff, exp: Date.now() + QUOTE_TTL_MS },
+      {
+        type: dto.type, amountMinor: breakdown.totalMinor, currency: 'NGN',
+        pickup: dto.pickup, dropoff: dto.dropoff,
+        // Omit `stops` entirely for a single-stop quote so its signed bytes are unchanged.
+        ...(stops.length > 0 ? { stops } : {}),
+        exp: Date.now() + QUOTE_TTL_MS,
+      },
       this.env.JOBS_QUOTE_SECRET,
     );
     return { quoteToken, amountMinor: breakdown.totalMinor, currency: 'NGN', breakdown };
@@ -153,9 +209,20 @@ export class JobsService {
     // Recompute the fare from the signed pickup/dropoff so we know the exact platform fee to split
     // out on release. Deterministic, so it reproduces the quote; if the signed total doesn't match,
     // the quote was tampered with or pricing drifted — reject rather than mis-charge.
-    const fare = computeFare(v.payload.type, haversineMeters(v.payload.pickup, v.payload.dropoff));
+    // #4 MULTI-STOP: recompute over the SIGNED route (pickup -> dropoff -> signed extra stops). The
+    // extra points come only from the signed token, never from the createJob body, so a client can't
+    // append/move a stop after quoting to under-pay. For a single-stop quote (no signed stops) this is
+    // exactly `haversineMeters(pickup, dropoff)` — the single-stop fare is unchanged.
+    const signedStops = v.payload.stops ?? [];
+    const fare = computeFare(v.payload.type, routeDistanceMeters([v.payload.pickup, v.payload.dropoff, ...signedStops]));
     if (fare.totalMinor !== v.payload.amountMinor) {
       throw new BadRequestException('Quote no longer valid — please refresh your price');
+    }
+    // The per-stop metadata (recipient/item/…) must line up 1:1 with the signed points, else we can't
+    // safely attribute a recipient/code to a stop — reject rather than guess.
+    const stopMeta = dto.extraStops ?? [];
+    if (stopMeta.length !== signedStops.length) {
+      throw new BadRequestException('Stop details do not match the quoted stops — please refresh your price');
     }
 
     // One unpaid order at a time: block a new order while the customer still has one awaiting
@@ -176,8 +243,35 @@ export class JobsService {
     // return fee on top of the fare and hold it in escrow. It's refunded if the delivery succeeds,
     // or released to the rider as the return leg if it actually comes back. Added server-side (not
     // from the client), so the fare tamper-guard above still holds on the signed quote amount.
-    const returnReserveMinor = dto.fallbackPolicy === 'RETURN' ? computeReturnFareMinor(fare.totalMinor) : 0;
+    //
+    // #0 DIRECT DELIVERY: in direct mode NO return deposit is ever pre-charged — the escrow hold is
+    // the plain fare only. Any fallbackPolicy the client still sends is accepted but ignored for
+    // charging (delegate-style is the default). This is only fallback-mode behaviour.
+    const returnReserveMinor = (!this.directMode && dto.fallbackPolicy === 'RETURN')
+      ? computeReturnFareMinor(fare.totalMinor)
+      : 0;
     const chargeMinor = v.payload.amountMinor + returnReserveMinor;
+
+    // #4 MULTI-STOP: materialise each extra drop-off from its SIGNED point + the customer's metadata,
+    // and mint a single-use confirmation code per stop (stored HASHED, exactly like the primary code).
+    // The plaintext codes are returned once to the booking customer to hand to each recipient.
+    const extraStopCodes: string[] = [];
+    const extraStops: ExtraStop[] = signedStops.map((point, i) => {
+      const code = generateCode();
+      extraStopCodes.push(code);
+      const meta = stopMeta[i] ?? {};
+      return {
+        point: { lat: point.lat, lng: point.lng },
+        status: 'PENDING' as const,
+        codeHash: this.hasher.hash(code),
+        attempts: 0,
+        ...(meta.recipient ? { recipient: { name: meta.recipient.name, phone: meta.recipient.phone } } : {}),
+        ...(meta.item ? { item: meta.item } : {}),
+        ...(meta.instructions ? { instructions: meta.instructions } : {}),
+        ...(meta.address ? { address: meta.address } : {}),
+        ...(meta.area ? { area: meta.area } : {}),
+      };
+    });
 
     const job: Job = {
       id: randomUUID(), type: v.payload.type, status: 'CREATED', customerId,
@@ -192,6 +286,7 @@ export class JobsService {
       ...(dto.pickupArea ? { pickupArea: dto.pickupArea } : {}),
       ...(dto.dropoffArea ? { dropoffArea: dto.dropoffArea } : {}),
       ...(dto.recipient ? { recipient: dto.recipient } : {}),
+      ...(extraStops.length > 0 ? { extraStops } : {}),
       ...(dto.item ? { item: dto.item } : {}),
       ...(dto.weightKg != null ? { weightGrams: Math.round(dto.weightKg * 1000) } : {}),
       ...(dto.instructions ? { instructions: dto.instructions } : {}),
@@ -208,7 +303,9 @@ export class JobsService {
     const email = await this.collectionEmail(customerId);
     const { txRef, link } = await this.escrow.beginCollection(job.id, Money.of(job.amountMinor), email, redirectUrl);
     await this.jobs.setPaymentRefs(job.id, { txRef });
-    return { ...job, flwTxRef: txRef, paymentLink: link };
+    // Never echo the stored code hashes back; hand the customer the plaintext per-stop codes instead.
+    const safeJob = redactExtraStopsForViewer({ ...job, flwTxRef: txRef }, false);
+    return { ...safeJob, paymentLink: link, ...(extraStopCodes.length > 0 ? { extraStopCodes } : {}) };
   }
 
   /**
@@ -410,6 +507,25 @@ export class JobsService {
     if (job.waitingFeeMinor && !job.waitingTxId) {
       throw new ConflictException('The waiting fee has not been paid yet — ask the customer to pay before handover');
     }
+    // #4 MULTI-STOP: on a job with extra drop-offs, confirming the PRIMARY code delivers stop #1 only.
+    // It moves the job to EN_ROUTE_STOP and records the primary delivery, but MUST NOT release escrow
+    // while any extra stop is still pending — the rider is paid once, after the FINAL stop (confirmStop).
+    if (hasExtraStops(job)) {
+      // Idempotent: if the primary was already delivered (re-tap / lost response), just report state.
+      if (job.primaryStopDeliveredAt != null || job.status === 'EN_ROUTE_STOP') {
+        return { status: job.status };
+      }
+      assertTransition(job.status, 'EN_ROUTE_STOP');
+      await this.jobs.setPrimaryStopDelivered(job.id, Date.now());
+      await this.transitionTo(job.id, 'EN_ROUTE_STOP');
+      const remaining = job.extraStops!.length;
+      await this.notify.record(job.customerId, {
+        title: 'First stop delivered',
+        body: `Your first drop-off is complete. ${remaining} more stop${remaining === 1 ? '' : 's'} to go.`,
+        jobId: job.id,
+      });
+      return { status: 'EN_ROUTE_STOP' };
+    }
     await this.releaseFullToRider(job, riderId);
     // Delivered successfully: the pre-charged "return insurance" reserve wasn't needed -> refund it.
     if (job.returnReserveMinor && job.flwTxId) {
@@ -423,6 +539,84 @@ export class JobsService {
       jobId,
     });
     return { status: 'RELEASED' };
+  }
+
+  /**
+   * #4 MULTI-STOP: the rider confirms an EXTRA drop-off by its recipient's own single-use code.
+   *
+   * Mirrors the primary delivery-code contract (peppered hash, attempt cap, single-use, opaque
+   * "Invalid code" on every failure — no enumeration) AND adds a GPS geofence at the stop, mirroring
+   * markArrived. Money-safety is the whole point of the ordering here:
+   *   - the primary drop-off must be delivered first, then extra stops strictly in order;
+   *   - each intermediate stop only flips its own PENDING->DELIVERED flag (NO escrow movement);
+   *   - only the FINAL stop's confirmation calls releaseFullToRider, which is idempotent in
+   *     escrow.settle — so the rider is paid fare-minus-fee EXACTLY ONCE, never per stop, never twice.
+   *
+   * `index` is 0-based within `extraStops` (extra stop #1 = index 0), confirmed after the primary.
+   */
+  async confirmStop(riderId: string, jobId: string, index: number, code: string, riderPos: GeoPoint, accuracyMeters = 0): Promise<{ status: JobStatus }> {
+    const job = await this.assertAssigned(jobId, riderId);
+    const stops = job.extraStops ?? [];
+    const stop = stops[index];
+    if (!stop) throw new UnauthorizedException('Invalid code'); // never reveal how many/which stops exist
+
+    // Extra stops come AFTER the primary drop-off. Reject confirming one before the primary is done —
+    // unless it's already delivered (a harmless idempotent replay, handled by the code check below).
+    if (stop.status !== 'DELIVERED' && job.primaryStopDeliveredAt == null) {
+      throw new ConflictException('Confirm the first drop-off before the extra stops');
+    }
+
+    const matches = this.hasher.verify(code, stop.codeHash ?? '');
+    // A CodeRecord view for the shared checker. createdAtMs=now disables the primary code's 1-hour TTL:
+    // an extra stop's code must last the whole (possibly multi-hour) route, so it's protected by the
+    // attempt cap + single-use + geofence + assigned-rider gates, not by a booking-time expiry.
+    const record: CodeRecord = {
+      kind: 'DELIVERY', codeHash: stop.codeHash ?? '', createdAtMs: Date.now(),
+      attempts: stop.attempts ?? 0, consumed: stop.status === 'DELIVERED',
+    };
+    const res = checkCode(record, matches, Date.now());
+    if (!res.ok) {
+      // Idempotent retry: the confirm (and any final release) is durable but the response can be lost.
+      // Re-submitting the SAME correct code on an already-delivered stop reports status, not an error.
+      if (res.reason === 'already_used' && matches) return { status: job.status };
+      // Count every wrong guess so a stop code can't become an unmetered guessing oracle.
+      if (!matches) await this.jobs.incrementExtraStopAttempts(jobId, index);
+      throw new UnauthorizedException('Invalid code');
+    }
+
+    // Strict order: this must be the NEXT pending stop — you can't skip an earlier undelivered one.
+    if (nextPendingStopIndex(stops) !== index) {
+      throw new ConflictException('Deliver the earlier stop first');
+    }
+
+    // Geofence: the rider must physically be at this stop (mirrors markArrived for the primary drop-off).
+    const at = checkArrival(riderPos, stop.point, this.env.ARRIVAL_RADIUS_M, accuracyMeters);
+    if (!at.ok) {
+      throw new BadRequestException(
+        `You appear to be ${at.distanceMeters}m from this stop (within ${at.allowedMeters}m required). Move closer or wait for a better GPS signal, then try again.`,
+      );
+    }
+
+    await this.jobs.markExtraStopDelivered(jobId, index, Date.now());
+    const updated = await this.mustFind(jobId);
+
+    if (allExtraStopsDelivered(updated.extraStops)) {
+      // FINAL stop delivered — release escrow ONCE (fare-minus-fee), idempotent + durable via settle.
+      await this.releaseFullToRider(updated, riderId);
+      await this.notify.record(job.customerId, {
+        title: 'All stops delivered',
+        body: 'Every drop-off on your multi-stop delivery is complete. Thanks for riding with Rydafirst.',
+        jobId,
+      });
+      return { status: 'RELEASED' };
+    }
+    const left = (updated.extraStops ?? []).filter((s) => s.status === 'PENDING').length;
+    await this.notify.record(job.customerId, {
+      title: 'Stop delivered',
+      body: `A drop-off is complete. ${left} more stop${left === 1 ? '' : 's'} to go.`,
+      jobId,
+    });
+    return { status: 'EN_ROUTE_STOP' };
   }
 
   /**
@@ -500,6 +694,7 @@ export class JobsService {
    * separate collection (never carved from the fare); the rider may only hand over once it's paid.
    */
   async chargeWaiting(riderId: string, jobId: string): Promise<{ waitingFeeMinor: number; paymentLink: string; flwTxRef: string }> {
+    this.assertFallbackMode(); // #0 DIRECT DELIVERY: no waiting fee in direct mode
     const job = await this.assertAssigned(jobId, riderId);
     if (job.status !== 'WAITING') throw new ConflictException('Start the wait timer first');
     if (job.waitStartedAt == null || !graceElapsed(job.waitStartedAt, Date.now())) {
@@ -523,6 +718,7 @@ export class JobsService {
    * sender to pay. Same money path as the rider's request, but authorised to the customer who pays.
    */
   async payWaiting(actorId: string, jobId: string): Promise<{ waitingFeeMinor: number; paymentLink: string; flwTxRef: string }> {
+    this.assertFallbackMode(); // #0 DIRECT DELIVERY: no waiting fee in direct mode
     const job = await this.mustFind(jobId);
     if (job.customerId !== actorId) throw new ForbiddenException();
     if (job.status !== 'WAITING' && job.status !== 'AWAITING_RESOLUTION') {
@@ -545,6 +741,7 @@ export class JobsService {
 
   /** Verify-on-return confirmation for a waiting-fee payment (webhook-independent). */
   async confirmWaitingPayment(actorId: string, jobId: string, transactionId: string): Promise<{ funded: boolean }> {
+    this.assertFallbackMode(); // #0 DIRECT DELIVERY: no waiting fee to confirm in direct mode
     const job = await this.getJob(actorId, jobId); // owner/party check
     if (!job.waitingTxRef || job.waitingTxId) return { funded: !!job.waitingTxId };
     const verified = await this.escrow.verifyTransaction(transactionId);
@@ -562,6 +759,7 @@ export class JobsService {
    * is never charged for them. Metered charging only begins later, and only if the sender approves it.
    */
   async startWaiting(riderId: string, jobId: string): Promise<{ status: JobStatus; waitStartedAt: number }> {
+    this.assertFallbackMode(); // #0 DIRECT DELIVERY: the wait timer does not exist in direct mode
     const job = await this.assertAssigned(jobId, riderId);
     if (job.status === 'WAITING') return { status: 'WAITING', waitStartedAt: job.waitStartedAt ?? Date.now() };
     assertTransition(job.status, 'WAITING');
@@ -586,6 +784,7 @@ export class JobsService {
    * Blocked until the 10-minute grace has actually passed, so the customer is never charged early.
    */
   async escalateResolution(riderId: string, jobId: string): Promise<{ status: JobStatus; waitingSoFarMinor: number; returnFareMinor: number }> {
+    this.assertFallbackMode(); // #0 DIRECT DELIVERY: no keep-waiting/return resolution in direct mode
     const job = await this.assertAssigned(jobId, riderId);
     if (job.status === 'AWAITING_RESOLUTION') return { status: job.status, ...this.resolutionQuote(job) };
     if (job.status !== 'WAITING') throw new ConflictException('Start the wait timer first');
@@ -605,6 +804,7 @@ export class JobsService {
 
   /** Sender chooses to keep the rider waiting — the metered fee now applies (paid before handover). */
   async keepWaiting(actorId: string, jobId: string): Promise<{ status: JobStatus; waitingSoFarMinor: number }> {
+    this.assertFallbackMode(); // #0 DIRECT DELIVERY: no keep-waiting resolution in direct mode
     const job = await this.mustFind(jobId);
     if (job.customerId !== actorId) throw new ForbiddenException();
     if (job.status !== 'AWAITING_RESOLUTION') throw new ConflictException('This delivery is not awaiting your decision');
@@ -625,6 +825,7 @@ export class JobsService {
    * The return charge is on top and never comes out of the rider's earnings.
    */
   async initiateReturn(actorId: string, jobId: string, returnUrl?: string): Promise<Job & { paymentLink?: string; prepaid?: boolean }> {
+    this.assertFallbackMode(); // #0 DIRECT DELIVERY: no return-to-sender leg in direct mode
     const job = await this.mustFind(jobId);
     if (job.customerId !== actorId) throw new ForbiddenException();
     if (job.status !== 'AWAITING_RESOLUTION' && job.status !== 'WAITING') {
@@ -684,6 +885,7 @@ export class JobsService {
   }
 
   async failedAttempt(riderId: string, jobId: string): Promise<{ status: JobStatus; attemptFeeMinor: number; waitingFeeMinor: number }> {
+    this.assertFallbackMode(); // #0 DIRECT DELIVERY: no failed-attempt fee in direct mode
     const job = await this.assertAssigned(jobId, riderId);
     assertTransition(job.status, 'FAILED_ATTEMPT');
     await this.transitionTo(jobId, 'FAILED_ATTEMPT');
@@ -729,8 +931,10 @@ export class JobsService {
     const job = await this.mustFind(jobId);
     if (job.customerId !== actorId && job.riderId !== actorId) throw new ForbiddenException();
     const fresh = await this.expireIfStale(job);
-    // Field-level authz: withhold the recipient's phone from the rider until pickup (IN_PROGRESS+).
-    return redactRecipientPhoneForRider(fresh, actorId === fresh.riderId);
+    // Field-level authz: withhold the recipient's phone from the rider until pickup (IN_PROGRESS+), and
+    // strip internal per-stop code hashes from everyone + downstream recipients' phones from the rider.
+    const viewerIsRider = actorId === fresh.riderId;
+    return redactExtraStopsForViewer(redactRecipientPhoneForRider(fresh, viewerIsRider), viewerIsRider);
   }
 
   /** The assigned rider's public details (name, vehicle) for the job's customer or rider to see. */
@@ -753,7 +957,8 @@ export class JobsService {
   async myJobs(customerId: string): Promise<Job[]> {
     const jobs = await this.jobs.listByCustomer(customerId);
     const out: Job[] = [];
-    for (const j of jobs) out.push(await this.expireIfStale(j));
+    // Customer view: their own recipient contacts stay, but never expose the internal per-stop hashes.
+    for (const j of jobs) out.push(redactExtraStopsForViewer(await this.expireIfStale(j), false));
     return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
@@ -917,7 +1122,9 @@ export class JobsService {
     return { ok: true };
   }
 
-  async listActiveJobs(): Promise<Job[]> { return this.jobs.listActive(); }
+  async listActiveJobs(): Promise<Job[]> {
+    return (await this.jobs.listActive()).map((j) => redactExtraStopsForViewer(j, false));
+  }
 
   /**
    * Active jobs, each flagged `late` when its drop leg has passed the escalation threshold (2x ETA).
@@ -926,7 +1133,7 @@ export class JobsService {
    * Only drop-leg jobs read the status log, so the extra work is bounded to jobs that could be late.
    */
   async listActiveJobsWithLateness(nowMs = Date.now()): Promise<Array<Job & { late: boolean }>> {
-    const jobs = await this.jobs.listActive();
+    const jobs = (await this.jobs.listActive()).map((j) => redactExtraStopsForViewer(j, false));
     return Promise.all(jobs.map(async (j) => {
       if (!isDropLegStage(j.status)) return { ...j, late: false };
       const events = await this.statusLog.list(j.id);
@@ -936,8 +1143,13 @@ export class JobsService {
       return { ...j, late: tier === 'all' };
     }));
   }
-  async listRecentJobs(limit = 100): Promise<Job[]> { return this.jobs.listRecent(limit); }
-  async jobsForRider(riderId: string): Promise<Job[]> { return this.jobs.listByRider(riderId); }
+  async listRecentJobs(limit = 100): Promise<Job[]> {
+    return (await this.jobs.listRecent(limit)).map((j) => redactExtraStopsForViewer(j, false));
+  }
+  async jobsForRider(riderId: string): Promise<Job[]> {
+    // Rider view: strip per-stop code hashes, and downstream recipients' phones until pickup.
+    return (await this.jobs.listByRider(riderId)).map((j) => redactExtraStopsForViewer(j, true));
+  }
 
   async status(jobId: string): Promise<JobStatus> { return (await this.mustFind(jobId)).status; }
 

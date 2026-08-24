@@ -18,6 +18,7 @@ export type JobStatus =
   | 'AWAITING_CODE'      // delivery: awaiting receiver code
   | 'WAITING'            // rider started the wait timer (10-min free grace, then metered)
   | 'AWAITING_RESOLUTION'// grace expired, no collection: sender must choose keep-waiting or return
+  | 'EN_ROUTE_STOP'      // multi-stop: primary drop-off delivered, rider en route to remaining stops
   | 'COMPLETED'
   | 'RELEASED'
   | 'CANCELLED'
@@ -35,8 +36,13 @@ const TRANSITIONS: Readonly<Record<JobStatus, readonly JobStatus[]>> = {
   AT_PICKUP: ['IN_PROGRESS', 'CANCELLED', 'SEARCHING'],
   IN_PROGRESS: ['EN_ROUTE_DROP', 'DISPUTED'],
   EN_ROUTE_DROP: ['ARRIVED', 'DISPUTED'],
-  ARRIVED: ['AWAITING_CODE', 'COMPLETED', 'WAITING', 'FAILED_ATTEMPT', 'DISPUTED'],
-  AWAITING_CODE: ['COMPLETED', 'WAITING', 'FAILED_ATTEMPT', 'DISPUTED'],
+  // Multi-stop: confirming the primary drop-off code moves the job to EN_ROUTE_STOP (NOT COMPLETED),
+  // so escrow is NOT released while any extra stop is still pending.
+  ARRIVED: ['AWAITING_CODE', 'COMPLETED', 'EN_ROUTE_STOP', 'WAITING', 'FAILED_ATTEMPT', 'DISPUTED'],
+  AWAITING_CODE: ['COMPLETED', 'EN_ROUTE_STOP', 'WAITING', 'FAILED_ATTEMPT', 'DISPUTED'],
+  // Multi-stop tail: intermediate extra stops flip their own flag without a job transition; only the
+  // FINAL stop's confirmation moves EN_ROUTE_STOP -> COMPLETED (-> RELEASED), releasing escrow once.
+  EN_ROUTE_STOP: ['COMPLETED', 'DISPUTED'],
   // Rider waited out the free grace with no collection; sender decides what happens next.
   WAITING: ['COMPLETED', 'AWAITING_RESOLUTION', 'DISPUTED'],
   // Sender: keep waiting (now metered) -> WAITING; recipient shows -> COMPLETED; or initiate a
@@ -108,7 +114,7 @@ export function isDeliveryComplete(status: JobStatus): boolean {
  */
 const RIDER_ENGAGED: readonly JobStatus[] = [
   'ACCEPTED', 'EN_ROUTE_PICKUP', 'AT_PICKUP', 'IN_PROGRESS',
-  'EN_ROUTE_DROP', 'ARRIVED', 'AWAITING_CODE', 'WAITING', 'AWAITING_RESOLUTION',
+  'EN_ROUTE_DROP', 'ARRIVED', 'AWAITING_CODE', 'WAITING', 'AWAITING_RESOLUTION', 'EN_ROUTE_STOP',
 ];
 export function isRiderEngaged(status: JobStatus): boolean {
   return RIDER_ENGAGED.includes(status);

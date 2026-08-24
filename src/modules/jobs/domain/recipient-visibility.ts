@@ -19,6 +19,7 @@ const RIDER_MAY_SEE_RECIPIENT: ReadonlySet<JobStatus> = new Set<JobStatus>([
   'AWAITING_CODE',
   'WAITING',
   'AWAITING_RESOLUTION',
+  'EN_ROUTE_STOP',
 ]);
 
 export function recipientPhoneVisibleToRider(status: JobStatus): boolean {

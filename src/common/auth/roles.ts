@@ -1,6 +1,6 @@
 /** Roles and a coarse permission matrix. Fine-grained admin sub-roles layer on top. */
 export type Role = 'CUSTOMER' | 'RIDER' | 'ADMIN';
-export type AdminScope = 'KYC' | 'DISPUTE' | 'FINANCE' | 'OPS';
+export type AdminScope = 'KYC' | 'DISPUTE' | 'FINANCE' | 'OPS' | 'SUPPORT';
 
 export type Permission =
   | 'job:create'
@@ -14,12 +14,13 @@ export type Permission =
   | 'admin:dispute:resolve'
   | 'admin:finance:read'
   | 'admin:finance:manage'
+  | 'admin:support:manage'
   | 'admin:settings:manage';
 
 const MATRIX: Readonly<Record<Role, readonly Permission[]>> = {
   CUSTOMER: ['job:create', 'job:read:own', 'wallet:read:own', 'account:manage:own'],
   RIDER: ['job:accept', 'job:read:own', 'wallet:read:own', 'account:manage:own', 'payout:request', 'rider:documents:manage'],
-  ADMIN: ['admin:kyc:review', 'admin:dispute:resolve', 'admin:finance:read', 'admin:finance:manage', 'admin:settings:manage'],
+  ADMIN: ['admin:kyc:review', 'admin:dispute:resolve', 'admin:finance:read', 'admin:finance:manage', 'admin:support:manage', 'admin:settings:manage'],
 };
 
 /** Deny-by-default: a role has a permission only if explicitly granted. */
@@ -33,6 +34,7 @@ export function adminCan(scopes: readonly AdminScope[], perm: Permission): boole
   if (perm === 'admin:dispute:resolve') return scopes.includes('DISPUTE');
   if (perm === 'admin:finance:read') return scopes.includes('FINANCE');
   if (perm === 'admin:finance:manage') return scopes.includes('FINANCE');
+  if (perm === 'admin:support:manage') return scopes.includes('SUPPORT');
   if (perm === 'admin:settings:manage') return scopes.includes('OPS');
   return false;
 }

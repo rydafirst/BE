@@ -7,6 +7,11 @@ export interface QuotePayload {
   currency: 'NGN';
   pickup: { lat: number; lng: number };
   dropoff: { lat: number; lng: number };
+  // #4 MULTI-STOP: the ORDERED extra drop-off points AFTER the primary dropoff. Signed here so the
+  // client cannot add/remove/move a stop to change the multi-leg price after the quote. Absent for a
+  // single-stop quote — `JSON.stringify` omits an undefined key, so a single-stop token is byte-for-
+  // byte identical to before this field existed (the single-stop signature is unchanged).
+  stops?: { lat: number; lng: number }[];
   exp: number; // epoch ms expiry
 }
 

@@ -6,8 +6,16 @@ import type { Job, JobRepository } from '../ports.js';
 @Injectable()
 export class InMemoryJobRepo implements JobRepository {
   private m = new Map<string, Job>();
-  async create(job: Job): Promise<void> { this.m.set(job.id, { ...job }); }
-  async find(id: string): Promise<Job | null> { return this.m.get(id) ?? null; }
+  async create(job: Job): Promise<void> {
+    // Deep-copy extraStops so a later in-place mutation of a stop can't leak back into the caller's
+    // object (mirrors how the Prisma adapter would round-trip through the DB).
+    this.m.set(job.id, { ...job, ...(job.extraStops ? { extraStops: job.extraStops.map((s) => ({ ...s })) } : {}) });
+  }
+  async find(id: string): Promise<Job | null> {
+    const j = this.m.get(id);
+    if (!j) return null;
+    return { ...j, ...(j.extraStops ? { extraStops: j.extraStops.map((s) => ({ ...s })) } : {}) };
+  }
   async updateStatus(id: string, status: JobStatus): Promise<void> {
     const j = this.m.get(id); if (j) j.status = status;
   }
@@ -54,6 +62,17 @@ export class InMemoryJobRepo implements JobRepository {
   }
   async listPayoutPending(limit: number): Promise<Job[]> {
     return [...this.m.values()].filter((j) => j.payoutPending).slice(0, limit);
+  }
+  async setPrimaryStopDelivered(id: string, atMs: number): Promise<void> {
+    const j = this.m.get(id); if (j) j.primaryStopDeliveredAt = atMs;
+  }
+  async markExtraStopDelivered(id: string, index: number, atMs: number): Promise<void> {
+    const s = this.m.get(id)?.extraStops?.[index];
+    if (s) { s.status = 'DELIVERED'; s.deliveredAt = atMs; }
+  }
+  async incrementExtraStopAttempts(id: string, index: number): Promise<void> {
+    const s = this.m.get(id)?.extraStops?.[index];
+    if (s) s.attempts = (s.attempts ?? 0) + 1;
   }
   async claim(id: string, riderId: string): Promise<boolean> {
     const j = this.m.get(id);

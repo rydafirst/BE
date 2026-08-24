@@ -1,6 +1,7 @@
 import type { JobStatus } from './domain/job-state-machine.js';
 import type { JobType } from './domain/fare.js';
 import type { GeoPoint } from './domain/geo.js';
+import type { ExtraStop } from './domain/multi-stop.js';
 
 export interface Job {
   id: string;
@@ -23,6 +24,10 @@ export interface Job {
   pickupArea?: string;      // coarse neighbourhood (e.g. "Ikeja") shown in the pre-accept feed
   dropoffArea?: string;
   recipient?: { name: string; phone?: string }; // phone withheld from the rider until pickup (recipient-visibility.ts)
+  // #4 MULTI-STOP: ordered extra drop-offs AFTER the primary dropoff, each with its own recipient +
+  // hashed code + PENDING/DELIVERED status. Absent for a single-stop delivery (unchanged path).
+  extraStops?: ExtraStop[];
+  primaryStopDeliveredAt?: number; // epoch ms the primary drop-off code was confirmed (multi-stop only)
   item?: string;
   weightGrams?: number;   // approximate item weight (shown to the rider for clarity)
   instructions?: string;
@@ -61,6 +66,13 @@ export interface JobRepository {
   setWaitingRefs(id: string, refs: { txRef?: string; txId?: string; feeMinor?: number }): Promise<void>;
   /** Record the outcome of the rider payout so a failed transfer can be retried later. */
   setPayoutState(id: string, state: { pending: boolean; error?: string | null; ref?: string | null }): Promise<void>;
+  // #4 MULTI-STOP writers. All are no-ops on a job without extra stops.
+  /** Mark the primary drop-off delivered (multi-stop): records the timestamp only, never releases. */
+  setPrimaryStopDelivered(id: string, atMs: number): Promise<void>;
+  /** Mark extra stop `index` DELIVERED (sets status + deliveredAt). Escrow release is the caller's job. */
+  markExtraStopDelivered(id: string, index: number, atMs: number): Promise<void>;
+  /** Count a wrong-code guess against extra stop `index` (so a stop code can't be an unmetered oracle). */
+  incrementExtraStopAttempts(id: string, index: number): Promise<void>;
   /** Jobs whose rider payout still needs to be retried (ops + scheduled retry). */
   listPayoutPending(limit: number): Promise<Job[]>;
 }

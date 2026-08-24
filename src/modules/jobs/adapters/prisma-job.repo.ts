@@ -38,6 +38,10 @@ export class PrismaJobRepository implements JobRepository {
       waitingTxId: job.waitingTxId ?? null,
       waitingFeeMinor: job.waitingFeeMinor ?? null,
       returnReserveMinor: job.returnReserveMinor ?? null,
+      // #4 MULTI-STOP: the ordered extra drop-offs (incl. hashed per-stop codes + status) as JSON, and
+      // the primary-stop delivery timestamp. Added by migration 20260722000000_job_multi_stop.
+      extraStops: (job.extraStops ?? null) as PrismaWrite,
+      primaryStopDeliveredAt: job.primaryStopDeliveredAt != null ? new Date(job.primaryStopDeliveredAt) : null,
     };
     await this.db.job.create({ data: data as PrismaWrite });
   }
@@ -52,6 +56,8 @@ export class PrismaJobRepository implements JobRepository {
       waitStartedAt: Date | null; returnOfJobId: string | null;
       waitingTxRef: string | null; waitingTxId: string | null; waitingFeeMinor: number | null;
       returnReserveMinor: number | null; weightGrams: number | null; customerName: string | null;
+      extraStops: import('../domain/multi-stop.js').ExtraStop[] | null;
+      primaryStopDeliveredAt: Date | null;
     };
     return {
       id: r.id, type: r.type, status: r.status as JobStatus, customerId: r.customerId,
@@ -81,12 +87,16 @@ export class PrismaJobRepository implements JobRepository {
       ...(x.waitingTxId ? { waitingTxId: x.waitingTxId } : {}),
       ...(x.waitingFeeMinor != null ? { waitingFeeMinor: x.waitingFeeMinor } : {}),
       ...(x.returnReserveMinor != null ? { returnReserveMinor: x.returnReserveMinor } : {}),
+      ...(x.extraStops && x.extraStops.length > 0 ? { extraStops: x.extraStops } : {}),
+      ...(x.primaryStopDeliveredAt ? { primaryStopDeliveredAt: x.primaryStopDeliveredAt.getTime() } : {}),
       createdAt: r.createdAt.toISOString(),
     };
   }
 
   async updateStatus(id: string, status: JobStatus): Promise<void> {
-    await this.db.job.update({ where: { id }, data: { status } });
+    // Cast: the EN_ROUTE_STOP enum value (migration 20260722000000_job_multi_stop) is only known to
+    // the generated client after `prisma generate` (runs on deploy; blocked in this sandbox). Valid at runtime.
+    await this.db.job.update({ where: { id }, data: { status } as PrismaWrite });
   }
 
   /** Race-safe accept: a conditional UPDATE that only succeeds while status is SEARCHING. */
@@ -133,6 +143,24 @@ export class PrismaJobRepository implements JobRepository {
       ...(state.ref !== undefined ? { payoutRef: state.ref } : {}),
     };
     await this.db.job.update({ where: { id }, data: data as PrismaWrite });
+  }
+  async setPrimaryStopDelivered(id: string, atMs: number): Promise<void> {
+    await this.db.job.update({ where: { id }, data: { primaryStopDeliveredAt: new Date(atMs) } as PrismaWrite });
+  }
+  // Extra-stop status lives in the `extraStops` JSON blob, so we read-modify-write the whole array.
+  // Serialised behind the job's own row; the delivery flow confirms stops one at a time, in order.
+  private async mutateExtraStop(id: string, index: number, fn: (s: import('../domain/multi-stop.js').ExtraStop) => void): Promise<void> {
+    const job = await this.find(id);
+    const stops = job?.extraStops;
+    if (!stops || !stops[index]) return;
+    fn(stops[index]!);
+    await this.db.job.update({ where: { id }, data: { extraStops: stops as unknown } as PrismaWrite });
+  }
+  async markExtraStopDelivered(id: string, index: number, atMs: number): Promise<void> {
+    await this.mutateExtraStop(id, index, (s) => { s.status = 'DELIVERED'; s.deliveredAt = atMs; });
+  }
+  async incrementExtraStopAttempts(id: string, index: number): Promise<void> {
+    await this.mutateExtraStop(id, index, (s) => { s.attempts = (s.attempts ?? 0) + 1; });
   }
   async listPayoutPending(limit: number): Promise<Job[]> {
     const rows = await this.db.job.findMany({ where: { payoutPending: true } as PrismaWrite, take: limit, select: { id: true } });

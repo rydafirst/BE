@@ -1,7 +1,8 @@
 import { Type } from 'class-transformer';
 import {
-  IsIn, IsNumber, IsOptional, IsString, Length, Max, Min, ValidateNested,
+  ArrayMaxSize, IsArray, IsIn, IsNumber, IsOptional, IsString, Length, Max, Min, ValidateNested,
 } from 'class-validator';
+import { MAX_EXTRA_STOPS } from '../domain/multi-stop.js';
 
 export class GeoPointDto {
   @IsNumber() @Min(-90) @Max(90) lat!: number;
@@ -12,11 +13,27 @@ export class QuoteRequestDto {
   @IsIn(['DELIVERY', 'RIDE']) type!: 'DELIVERY' | 'RIDE';
   @ValidateNested() @Type(() => GeoPointDto) pickup!: GeoPointDto;
   @ValidateNested() @Type(() => GeoPointDto) dropoff!: GeoPointDto;
+  // #4 MULTI-STOP: extra drop-off POINTS after the primary dropoff, in order. Optional — omitting it
+  // is a plain single-stop quote (unchanged). The fare is computed for the FULL multi-leg route and
+  // these points are signed into the quote token so they can't be tampered with before createJob.
+  @IsOptional() @IsArray() @ArrayMaxSize(MAX_EXTRA_STOPS)
+  @ValidateNested({ each: true }) @Type(() => GeoPointDto) stops?: GeoPointDto[];
 }
 
 export class RecipientDto {
   @IsString() @Length(1, 120) name!: string;
   @IsString() @Length(7, 15) phone!: string;
+}
+
+// #4 MULTI-STOP: the per-stop metadata for one extra drop-off, paired BY INDEX to the signed quote
+// `stops` points (the point is authoritative from the signed quote, never taken from this body). Each
+// stop's own recipient receives its own confirmation code.
+export class ExtraStopDto {
+  @IsOptional() @ValidateNested() @Type(() => RecipientDto) recipient?: RecipientDto;
+  @IsOptional() @IsString() @Length(1, 200) item?: string;
+  @IsOptional() @IsString() @Length(1, 500) instructions?: string;
+  @IsOptional() @IsString() @Length(1, 300) address?: string;
+  @IsOptional() @IsString() @Length(1, 120) area?: string;
 }
 
 export class CreateJobDto {
@@ -33,6 +50,10 @@ export class CreateJobDto {
   @IsOptional() @IsString() @Length(1, 300) dropoffAddress?: string;
   @IsOptional() @IsString() @Length(1, 120) pickupArea?: string;     // coarse neighbourhood
   @IsOptional() @IsString() @Length(1, 120) dropoffArea?: string;
+  // #4 MULTI-STOP: metadata for each extra drop-off, in the SAME order and count as the signed quote
+  // `stops`. Optional — omit for a single-stop delivery (unchanged). Points come from the signed quote.
+  @IsOptional() @IsArray() @ArrayMaxSize(MAX_EXTRA_STOPS)
+  @ValidateNested({ each: true }) @Type(() => ExtraStopDto) extraStops?: ExtraStopDto[];
   // Mobile deep-link return target after payment (validated against an allow-list server-side).
   @IsOptional() @IsString() @Length(1, 200) returnUrl?: string;
 }
