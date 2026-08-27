@@ -216,7 +216,12 @@ export const envSchema = z.object({
 export type Env = z.infer<typeof envSchema>;
 
 export function validateEnv(raw: Record<string, unknown>): Env {
-  const parsed = envSchema.safeParse(raw);
+  // Hosts (Railway, etc.) can surface a variable set to an EMPTY STRING. An empty string is a real
+  // value that fails enum/format checks and crashes boot — whereas an UNSET var falls back to the
+  // schema default. Treat "" as unset so a single blank variable can never take the whole deploy down.
+  const cleaned: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) if (v !== '') cleaned[k] = v;
+  const parsed = envSchema.safeParse(cleaned);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`Invalid environment configuration:\n${issues}`);
