@@ -110,7 +110,7 @@ export class JobsService {
   }
 
   /** The customer's name + photo for the assigned rider (party-only, after they're on the job). */
-  async assignedCustomerSummary(riderId: string, jobId: string): Promise<{ name?: string; photoUrl?: string; phone?: string; phoneMasked?: boolean; callMode?: 'proxy' | 'direct' }> {
+  async assignedCustomerSummary(riderId: string, jobId: string): Promise<{ name?: string; photoUrl?: string; phone?: string; phoneMasked?: boolean; callMode?: 'proxy' | 'direct'; callNumber?: string }> {
     const job = await this.mustFind(jobId);
     if (job.riderId !== riderId) throw new ForbiddenException();
     const photoUrl = await this.customerPhoto.photoUrl(job.customerId);
@@ -134,10 +134,21 @@ export class JobsService {
    * client requests a call and the server rings them; NO number is handed out) or 'direct' (fall
    * back to a `tel:` link with the number below).
    */
-  private async contactFor(job: Job, callerUserId: string, subjectUserId: string): Promise<{ phone?: string; phoneMasked?: boolean; callMode: 'proxy' | 'direct' }> {
+  private async contactFor(job: Job, callerUserId: string, subjectUserId: string): Promise<{ phone?: string; phoneMasked?: boolean; callMode: 'proxy' | 'direct'; callNumber?: string }> {
     if (!contactAllowed(job.status)) return { callMode: 'direct' };
-    // Masked calling on: hand the client the mode only — never the real number.
-    if (this.calls.enabled()) return { callMode: 'proxy' };
+    // Masked calling on (Pattern A): the client is offered TWO options in the call sheet —
+    //  · "In-app call" → dial `callNumber` (the AT masked line); the server bridges, numbers stay private.
+    //  · "Call out"    → dial `phone` (the counterparty's real number) from the normal phone dialer.
+    // Both are returned only while the delivery is in flight; the server stops returning them once it ends.
+    if (this.calls.enabled()) {
+      const callNumber = this.calls.maskedDialNumber();
+      const contact = await this.contact.numberFor({ jobId: job.id, callerUserId, subjectUserId });
+      return {
+        callMode: 'proxy',
+        ...(callNumber ? { callNumber } : {}),
+        ...(contact.number ? { phone: contact.number, phoneMasked: contact.masked } : {}),
+      };
+    }
     const contact = await this.contact.numberFor({ jobId: job.id, callerUserId, subjectUserId });
     return contact.number ? { phone: contact.number, phoneMasked: contact.masked, callMode: 'direct' } : { callMode: 'direct' };
   }
@@ -979,12 +990,16 @@ export class JobsService {
     const policy = cancellationPolicy(job.status);
     if (!policy.allowed) throw new ConflictException('Job can no longer be cancelled');
     await this.transitionTo(jobId, 'CANCELLED');
+    // The order is CANCELLED the moment the line above commits, so the customer's cancel can return
+    // immediately. The refund (a payment-provider round-trip) runs in the BACKGROUND — it used to be
+    // awaited here, which is why cancelling felt slow. escrow.settle is idempotent and there's a
+    // retryPayout path, so a slow/failed provider call is safe to re-drive rather than block the UI.
     if (policy.refundFull) {
-      const res = await this.escrow.settle({
+      void this.escrow.settle({
         jobId, status: 'CANCELLED', outcome: 'REFUND_FULL', collected: Money.of(job.amountMinor),
         ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),
         onPayoutSettled: this.recordPayoutState(jobId),
-      });
+      }).catch((e) => this.log.error(`cancel refund settle failed for ${jobId} — will need retryPayout: ${(e as Error).message}`));
     }
     await this.notify.record(job.customerId, {
       title: 'Order cancelled',

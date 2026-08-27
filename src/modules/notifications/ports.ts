@@ -45,6 +45,8 @@ export interface PushMessage {
   body: string;
   urgent: boolean;   // urgent → play a sound (like Uber); otherwise silent banner
   jobId?: string;
+  /** Deep-link hint for the client's notification-tap handler (e.g. 'chat' → open the trip's chat). */
+  kind?: string;
   /** 'persistent' → the client keeps alerting (bounded) until the user opens the app (see urgentAlert). */
   alertLevel?: 'persistent';
 }

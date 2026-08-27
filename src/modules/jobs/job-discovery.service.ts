@@ -12,6 +12,9 @@ export type AvailableJob = Pick<Job, 'id' | 'type' | 'amountMinor' | 'currency' 
     pickupArea: string; dropoffArea: string; pickupApprox: { lat: number; lng: number };
     tripDistanceMeters: number; tripEtaMin: number;      // pickup -> dropoff
     toPickupMeters?: number; toPickupEtaMin?: number;    // rider -> pickup (only when location is known)
+    // #4 MULTI-STOP: total drop-offs (primary + extras). Present only for multi-stop jobs (>1), so the
+    // rider sees a "MULTI-STOP · N DROPS" badge and can judge the extra work BEFORE accepting.
+    stopCount?: number;
   };
 
 /**
@@ -48,6 +51,7 @@ export class JobDiscoveryService {
         tripDistanceMeters: Math.round(tripMeters),
         tripEtaMin: etaMinutes(tripMeters),
         ...(toPickup !== undefined ? { toPickupMeters: Math.round(toPickup), toPickupEtaMin: etaMinutes(toPickup) } : {}),
+        ...((j.extraStops?.length ?? 0) > 0 ? { stopCount: (j.extraStops?.length ?? 0) + 1 } : {}),
       };
     });
     // Every rider sees every job — proximity only orders the board. With a location we sort

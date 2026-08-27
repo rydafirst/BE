@@ -25,7 +25,7 @@ export class NotificationsService {
    * devices. Both are best-effort — a push or feed failure can never break the job action that
    * triggered it. `urgent` events ring with a sound (like Uber); routine ones arrive silently.
    */
-  async record(userId: string, n: { title: string; body: string; jobId?: string; urgent?: boolean; alertLevel?: 'persistent' }): Promise<void> {
+  async record(userId: string, n: { title: string; body: string; jobId?: string; kind?: string; urgent?: boolean; alertLevel?: 'persistent' }): Promise<void> {
     const item: NotificationItem = {
       id: randomUUID(), title: n.title, body: n.body, createdAt: Date.now(), read: false,
       ...(n.jobId ? { jobId: n.jobId } : {}),
@@ -34,12 +34,13 @@ export class NotificationsService {
     try { await this.pushToDevices(userId, n); } catch { /* push is best-effort too */ }
   }
 
-  private async pushToDevices(userId: string, n: { title: string; body: string; jobId?: string; urgent?: boolean; alertLevel?: 'persistent' }): Promise<void> {
+  private async pushToDevices(userId: string, n: { title: string; body: string; jobId?: string; kind?: string; urgent?: boolean; alertLevel?: 'persistent' }): Promise<void> {
     const devices = await this.tokens.listForUser(userId);
     if (devices.length === 0) return;
     const report = await this.dispatcher.dispatch(devices.map((d) => ({
       to: d.token, title: n.title, body: n.body, urgent: Boolean(n.urgent),
       ...(n.jobId ? { jobId: n.jobId } : {}),
+      ...(n.kind ? { kind: n.kind } : {}),
       ...(n.alertLevel ? { alertLevel: n.alertLevel } : {}),
     })));
     await this.retireTokens(new Map(devices.map((d) => [d.token, userId])), report.invalidTokens);

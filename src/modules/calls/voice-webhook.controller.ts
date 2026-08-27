@@ -23,11 +23,23 @@ export class VoiceWebhookController {
     if (!secret || secret !== this.calls.callbackSecret()) {
       return buildRejectXml('Unauthorized.');
     }
+    const isActive = String(body?.isActive ?? '');
+    const direction = String(body?.direction ?? '').toLowerCase();
+    const callerNumber = String(body?.callerNumber ?? '');
     const sessionId = String(body?.sessionId ?? '');
+
+    // Pattern A (current): a party dialed our masked number. AT sends the caller's number and no session
+    // we created. On the first (active) callback, bridge them to their delivery's counterparty; the final
+    // callback just needs an acknowledgement.
+    if (direction === 'inbound' || (!sessionId && callerNumber)) {
+      if (isActive === '1') return this.calls.handleInboundCall(callerNumber);
+      return buildEmptyXml();
+    }
+
     if (!sessionId) return buildEmptyXml();
 
-    if (String(body?.isActive ?? '') === '1') {
-      // Ongoing call — the initiator answered; bridge them to the counterparty.
+    if (isActive === '1') {
+      // Legacy outbound path — the initiator answered; bridge them to the counterparty.
       return this.calls.handleAnswer(sessionId);
     }
     // Final callback — record duration and cost, then acknowledge.

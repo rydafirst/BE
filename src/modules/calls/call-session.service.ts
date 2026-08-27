@@ -47,6 +47,49 @@ export class CallSessionService {
     return this.env.VOICE_CALLBACK_SECRET;
   }
 
+  /** The masked AT number a client dials to reach the other party (Pattern A). Null if not configured. */
+  maskedDialNumber(): string | null {
+    return this.enabled() ? this.provider.callerId() : null;
+  }
+
+  /**
+   * Pattern A bridge: a party dialed our masked number from their own phone. AT calls this back with
+   * the CALLER's number; we find their in-flight delivery and return Dial XML that connects them to the
+   * counterparty — masked behind the AT number, so neither sees the other's real number.
+   *
+   * Why this shape (vs. the old outbound "ring the caller first"): dialling out to the caller made their
+   * OWN phone ring, which read as "calling myself" and, with one shared test number, literally dialled
+   * the same phone twice. Here the caller places a normal outgoing call and only the counterparty is rung.
+   *
+   * Disambiguation: a rider has at most one active delivery; a customer usually one. If somehow more than
+   * one matches, the first in the active list wins (good enough; a number pool would make it exact).
+   */
+  async handleInboundCall(rawCallerNumber: string): Promise<string> {
+    if (!this.enabled()) return buildRejectXml('In-app calling is not available right now.');
+    const caller = toNgE164(rawCallerNumber);
+    if (!caller) return buildRejectXml('We could not identify your number.');
+
+    const active = await this.jobs.listActive();
+    for (const job of active) {
+      if (!contactAllowed(job.status)) continue;
+      const custPhone = job.customerId ? toNgE164((await this.users.getPhone(job.customerId)) ?? '') : '';
+      const riderPhone = job.riderId ? toNgE164((await this.users.getPhone(job.riderId)) ?? '') : '';
+      let counterpartyId: string | undefined;
+      if (caller === custPhone && custPhone) counterpartyId = job.riderId;
+      else if (caller === riderPhone && riderPhone) counterpartyId = job.customerId;
+      if (!counterpartyId) continue;
+
+      const allowed = await this.limiter.hit(`call:in:${caller}`, CALL_RATE_LIMIT, CALL_RATE_WINDOW_SEC);
+      if (!allowed) return buildRejectXml('Too many call attempts. Please try again shortly.');
+
+      const toNumber = await this.users.getPhone(counterpartyId);
+      const callerId = this.provider.callerId();
+      if (!toNumber || !callerId) return buildRejectXml('The other party is unavailable right now.');
+      return buildDialXml(`+${toNgE164(toNumber)}`, callerId, CALL_MAX_SECONDS); // masked: counterparty sees the AT number
+    }
+    return buildRejectXml('You have no active delivery to connect to right now.');
+  }
+
   /**
    * Start a masked call from `callerUserId` to the other party of the job. Rings the caller first;
    * the bridge is completed by the provider callback once they answer.

@@ -9,7 +9,7 @@ const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const BATCH_SIZE = 100; // Expo accepts up to 100 messages per request
 
 function toExpoMessage(m: PushMessage) {
-  const data = buildPushData({ jobId: m.jobId, alertLevel: m.alertLevel });
+  const data = buildPushData({ jobId: m.jobId, kind: m.kind, alertLevel: m.alertLevel });
   return {
     to: m.to,
     title: m.title,

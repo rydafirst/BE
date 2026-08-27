@@ -42,7 +42,7 @@ export class ChatService {
     // only ever notify the one other participant. The push carries no message text.
     const counterparty = chatCounterparty(job, actorId);
     if (counterparty) {
-      try { await this.notify.record(counterparty, { ...chatNotification(), jobId, urgent: true }); }
+      try { await this.notify.record(counterparty, { ...chatNotification(), jobId, kind: 'chat', urgent: true }); }
       catch { /* notifications are best-effort — the message is already stored */ }
     }
     return msg;

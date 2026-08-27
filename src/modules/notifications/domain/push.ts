@@ -28,9 +28,10 @@ export function pushPriority(urgent: boolean): 'high' | 'default' {
  * `jobId` to deep-link, and `alertLevel` to start a bounded persistent alert. Returns undefined when
  * there is nothing to attach, so a plain notification stays plain.
  */
-export function buildPushData(opts: { jobId?: string; alertLevel?: 'persistent' }): Record<string, string> | undefined {
+export function buildPushData(opts: { jobId?: string; kind?: string; alertLevel?: 'persistent' }): Record<string, string> | undefined {
   const data: Record<string, string> = {};
   if (opts.jobId) data.jobId = opts.jobId;
+  if (opts.kind) data.kind = opts.kind;
   if (opts.alertLevel) data.alertLevel = opts.alertLevel;
   return Object.keys(data).length > 0 ? data : undefined;
 }
