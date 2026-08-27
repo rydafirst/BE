@@ -15,5 +15,5 @@ test('rejects non-listed or empty phones', () => {
 });
 
 test('admins get the full scope set', () => {
-  assert.deepEqual([...ALL_ADMIN_SCOPES], ['KYC', 'DISPUTE', 'FINANCE', 'OPS']);
+  assert.deepEqual([...ALL_ADMIN_SCOPES], ['KYC', 'DISPUTE', 'FINANCE', 'OPS', 'SUPPORT']);
 });
