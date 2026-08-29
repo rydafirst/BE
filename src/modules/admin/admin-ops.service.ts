@@ -21,12 +21,16 @@ export class AdminOpsService {
   }
 
   /** Full recent-delivery feed for the admin monitor (newest first), with the fields a card needs. */
-  async deliveries(): Promise<Array<{ id: string; status: string; type: string; amountMinor: number; pickupArea?: string; dropoffArea?: string; createdAt: string }>> {
+  async deliveries(): Promise<Array<{ id: string; status: string; type: string; amountMinor: number; pickupArea?: string; dropoffArea?: string; createdAt: string; payoutPending?: boolean; payoutError?: string }>> {
     const jobs = await this.jobs.listRecentJobs(100);
     return jobs.map((j) => ({
       id: j.id, status: j.status, type: j.type, amountMinor: j.amountMinor, createdAt: j.createdAt,
       ...(j.pickupArea ? { pickupArea: j.pickupArea } : {}),
       ...(j.dropoffArea ? { dropoffArea: j.dropoffArea } : {}),
+      // Surface the rider-payout state so a completed delivery whose transfer failed is visible at a
+      // glance (a "PAYOUT DUE" badge) instead of hiding until an admin digs in.
+      ...(j.payoutPending ? { payoutPending: true } : {}),
+      ...(j.payoutError ? { payoutError: j.payoutError } : {}),
     }));
   }
 

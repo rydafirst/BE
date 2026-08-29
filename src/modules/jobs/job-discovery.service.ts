@@ -15,6 +15,10 @@ export type AvailableJob = Pick<Job, 'id' | 'type' | 'amountMinor' | 'currency' 
     // #4 MULTI-STOP: total drop-offs (primary + extras). Present only for multi-stop jobs (>1), so the
     // rider sees a "MULTI-STOP · N DROPS" badge and can judge the extra work BEFORE accepting.
     stopCount?: number;
+    // What the RIDER actually earns: the customer's charge (`amountMinor`) MINUS the platform fee. The
+    // rider must decide on their take-home, never the gross the customer pays — showing the gross made a
+    // ₦5,000 job look like ₦5,000 to the rider when they'd be paid less.
+    riderPayoutMinor: number;
   };
 
 /**
@@ -45,6 +49,7 @@ export class JobDiscoveryService {
       const toPickup = riderPos ? haversineMeters(riderPos, j.pickup) : undefined;
       return {
         id: j.id, type: j.type, amountMinor: j.amountMinor, currency: j.currency, createdAt: j.createdAt,
+        riderPayoutMinor: Math.max(0, j.amountMinor - (j.platformFeeMinor ?? 0)),
         pickupArea: j.pickupArea || coarseArea(j.pickupAddress),
         dropoffArea: j.dropoffArea || coarseArea(j.dropoffAddress),
         pickupApprox: approximatePoint(j.pickup),
