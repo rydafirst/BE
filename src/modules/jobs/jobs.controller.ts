@@ -1,12 +1,13 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decorator.js';
+import { MarketplaceGuard } from '../settings/marketplace.guard.js';
 import { JobTimingsService } from './job-timings.service.js';
 import { JobDiscoveryService } from './job-discovery.service.js';
 import { JobRatingsService } from './job-ratings.service.js';
 import { JobsService } from './jobs.service.js';
 import { IsInt, IsNumber, IsOptional, IsString, Length, Max, Min } from 'class-validator';
-import { AdvanceDto, ArriveDto, ConfirmPaymentDto, CreateJobDto, QuoteRequestDto, RetryPaymentDto } from './dto/jobs.dto.js';
+import { AdvanceDto, ArriveDto, ConfirmPaymentDto, CreateErrandDto, CreateJobDto, CreateMarketplaceOrderDto, ErrandTopUpConfirmDto, ErrandTopUpRequestDto, ErrandTopUpStartDto, QuoteRequestDto, RetryPaymentDto, VendorAccountDto } from './dto/jobs.dto.js';
 
 class RatingDto {
   @IsInt() @Min(1) @Max(5) stars!: number;
@@ -50,6 +51,71 @@ export class JobsController {
   @RequirePermission('job:create')
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateJobDto) {
     return this.jobs.createJob(user.id, dto);
+  }
+
+  // ---- Errand ("buy-for-me") ----
+  @Post('errand')
+  @RequirePermission('job:create')
+  createErrand(@CurrentUser() user: AuthUser, @Body() dto: CreateErrandDto) {
+    return this.jobs.createErrand(user.id, dto);
+  }
+
+  /** MARKETPLACE: check out a cart from a registered vendor (prices read server-side from the catalog). */
+  @Post('marketplace')
+  @UseGuards(MarketplaceGuard)
+  @RequirePermission('job:create')
+  createMarketplaceOrder(@CurrentUser() user: AuthUser, @Body() dto: CreateMarketplaceOrderDto) {
+    return this.jobs.createMarketplaceOrder(user.id, dto);
+  }
+
+  /** MARKETPLACE: the vendor's own incoming orders + payout status (declared before :id). */
+  @Get('vendor-orders')
+  @UseGuards(MarketplaceGuard)
+  @RequirePermission('vendor:manage:own')
+  vendorOrders(@CurrentUser() user: AuthUser) {
+    return this.jobs.vendorOrders(user.id);
+  }
+
+  /** Rider captures the vendor's business account at the store; server resolves + name-matches it. */
+  @Post(':id/errand/vendor-account')
+  @RequirePermission('job:accept')
+  captureVendorAccount(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: VendorAccountDto) {
+    return this.jobs.captureVendorAccount(user.id, id, dto.bankCode, dto.accountNumber);
+  }
+
+  /** Customer approves the resolved vendor account — this releases the goods-money to the vendor. */
+  @Post(':id/errand/approve-vendor')
+  @RequirePermission('job:read:own')
+  approveVendor(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.approveVendorAccount(user.id, id);
+  }
+
+  /** Receipt proving the shop was paid — shown to the vendor, kept by the customer (either party). */
+  @Get(':id/errand/receipt')
+  @RequirePermission('job:read:own')
+  errandReceipt(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.errandReceipt(user.id, id);
+  }
+
+  /** Rider: the shop price is higher — ask the customer to add more money. */
+  @Post(':id/errand/request-topup')
+  @RequirePermission('job:accept')
+  requestTopUp(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ErrandTopUpRequestDto) {
+    return this.jobs.requestErrandTopUp(user.id, id, dto.additionalMinor);
+  }
+
+  /** Customer: start paying the requested top-up (returns the hosted-checkout link). */
+  @Post(':id/errand/start-topup')
+  @RequirePermission('job:read:own')
+  startTopUp(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ErrandTopUpStartDto) {
+    return this.jobs.startErrandTopUp(user.id, id, dto.returnUrl);
+  }
+
+  /** Customer: verify the paid top-up and apply it to the goods held for the vendor. */
+  @Post(':id/errand/confirm-topup')
+  @RequirePermission('job:read:own')
+  confirmTopUp(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ErrandTopUpConfirmDto) {
+    return this.jobs.confirmErrandTopUp(user.id, id, dto.transactionId);
   }
 
   // ---- Customer: order history (declared before :id so "mine" isn't read as an id) ----
@@ -182,6 +248,18 @@ export class JobsController {
     @Body() dto: ConfirmStopDto,
   ) {
     return this.jobs.confirmStop(user.id, id, index, dto.code, { lat: dto.lat, lng: dto.lng }, dto.accuracyM);
+  }
+
+  // #4 MULTI-STOP: the booking CUSTOMER re-reveals an extra stop's confirmation code (mints a fresh one),
+  // so they never have to screenshot the codes at booking. `index` is 0-based within extraStops.
+  @Post(':id/stops/:index/code')
+  @RequirePermission('job:read:own')
+  issueStopCode(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('index', ParseIntPipe) index: number,
+  ) {
+    return this.jobs.issueStopCode(user.id, id, index);
   }
 
   // ---- Rider: recipient unavailable — start the free 10-min wait, then escalate for resolution ----

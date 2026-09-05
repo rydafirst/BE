@@ -17,6 +17,7 @@ enum Role {
 enum JobType {
   DELIVERY
   RIDE
+  ERRAND
 }
 
 enum KycStatus {
@@ -24,6 +25,13 @@ enum KycStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum VendorStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
 }
 
 enum DisputeStatus {
@@ -39,6 +47,7 @@ enum LedgerAccount {
   RIDER_PAYABLE
   CUSTOMER_REFUND
   PLATFORM_FEE
+  VENDOR_PAYABLE
 }
 
 enum Direction {
@@ -184,6 +193,7 @@ model Job {
   // DELIVERED status) as JSON; and the moment the primary drop-off was delivered on a multi-stop job.
   extraStops      Json?
   primaryStopDeliveredAt DateTime?
+  errand          Json?     // ERRAND ("buy-for-me"): goods amount + store + captured vendor account
   createdAt       DateTime  @default(now())
 
   events          JobEvent[]
@@ -205,6 +215,10 @@ model ChatMessage {
   job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
   senderId  String
   body      String
+  replyToId String?  // id of the message this one is a reply to (in-thread quote); null for a plain message
+  audioKey  String?  // object-store key for a voice-note attachment; null for a text message
+  audioDurationMs Int? // voice-note length in ms (for the player UI), if this is a voice note
+  imageKey  String?  // object-store key for a photo attachment; null unless this message is a photo
   createdAt DateTime @default(now())
 
   @@index([jobId])
@@ -417,4 +431,44 @@ model RiderDocument {
   reviewedAt      BigInt?  // epoch ms
   createdAt       DateTime @default(now())
   @@index([riderId])
+}
+
+// A registered marketplace vendor (a shop). Owned by one user; paid to a name-verified BUSINESS
+// account only. Goes live once an admin approves (business KYC).
+model Vendor {
+  id            String       @id @default(uuid())
+  ownerUserId   String       @unique
+  businessName  String
+  rcNumber      String?      // CAC/RC registration number, if provided
+  category      String?
+  area          String?
+  description   String?
+  logoKey       String?
+  shopLat       Float?       // shop location — used to price vendor→customer delivery on marketplace orders
+  shopLng       Float?
+  status        VendorStatus @default(PENDING)
+  // Name-verified business payout account (resolved via NIP name-enquiry, customer-safe).
+  bankCode      String?
+  accountNumber String?
+  accountName   String?      // the name the bank returned for the account
+  accountVerified Boolean    @default(false)
+  rejectionReason String?
+  approvedAt    DateTime?
+  createdAt     DateTime     @default(now())
+  products      Product[]
+  @@index([status])
+}
+
+// A product a vendor lists for sale. Price is known up front (no top-up in the common path).
+model Product {
+  id          String   @id @default(uuid())
+  vendorId    String
+  vendor      Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  name        String
+  priceMinor  Int
+  description String?
+  photoKeys   String[] // object-store keys for product photos
+  available   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  @@index([vendorId])
 }

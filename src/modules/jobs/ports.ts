@@ -2,6 +2,7 @@ import type { JobStatus } from './domain/job-state-machine.js';
 import type { JobType } from './domain/fare.js';
 import type { GeoPoint } from './domain/geo.js';
 import type { ExtraStop } from './domain/multi-stop.js';
+import type { ErrandDetails } from './domain/errand.js';
 
 export interface Job {
   id: string;
@@ -28,6 +29,8 @@ export interface Job {
   // hashed code + PENDING/DELIVERED status. Absent for a single-stop delivery (unchanged path).
   extraStops?: ExtraStop[];
   primaryStopDeliveredAt?: number; // epoch ms the primary drop-off code was confirmed (multi-stop only)
+  // ERRAND ("buy-for-me"): goods-money + store + captured vendor account. Present only for type ERRAND.
+  errand?: ErrandDetails;
   item?: string;
   weightGrams?: number;   // approximate item weight (shown to the rider for clarity)
   instructions?: string;
@@ -55,6 +58,8 @@ export interface JobRepository {
   listActive(): Promise<Job[]>;
   listByRider(riderId: string): Promise<Job[]>;
   listByCustomer(customerId: string): Promise<Job[]>;
+  /** Marketplace orders for a vendor (jobs whose errand.marketplaceVendorId matches), newest first. */
+  listByMarketplaceVendor(vendorId: string, limit: number): Promise<Job[]>;
   /** Most recent jobs across the platform (admin monitoring), newest first. */
   listRecent(limit: number): Promise<Job[]>;
   findByTxRef(txRef: string): Promise<Job | null>;
@@ -71,6 +76,10 @@ export interface JobRepository {
   setPrimaryStopDelivered(id: string, atMs: number): Promise<void>;
   /** Mark extra stop `index` DELIVERED (sets status + deliveredAt). Escrow release is the caller's job. */
   markExtraStopDelivered(id: string, index: number, atMs: number): Promise<void>;
+  /** Re-issue an extra stop's confirmation code: replace its hash and reset the attempt counter. */
+  setExtraStopCode(id: string, index: number, codeHash: string): Promise<void>;
+  /** ERRAND: replace the errand details blob (vendor account capture, approval, payout state). */
+  setErrand(id: string, errand: ErrandDetails): Promise<void>;
   /** Count a wrong-code guess against extra stop `index` (so a stop code can't be an unmetered oracle). */
   incrementExtraStopAttempts(id: string, index: number): Promise<void>;
   /** Jobs whose rider payout still needs to be retried (ops + scheduled retry). */

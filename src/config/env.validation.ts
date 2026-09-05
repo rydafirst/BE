@@ -67,6 +67,10 @@ export const envSchema = z.object({
   // they can go online OR accept a job. Set 'false' only for a staged rollout before the document
   // pipeline is live (e.g. R2 not yet configured) — it re-opens the gate, so keep it on in prod.
   ENFORCE_RIDER_CLEARANCE: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  // Marketplace + vendor features master switch. OFF by default — the whole marketplace stays dark
+  // (server-enforced on every vendor/checkout endpoint, not just hidden in the UI) until it is turned
+  // on from admin. Kept off until the fund-flow has legal sign-off; an admin flips it on when cleared.
+  MARKETPLACE_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // Where document images live: 'memory' (dev) or 'r2' (Cloudflare R2 / S3-compatible, prod).
   DOCUMENT_STORE_DRIVER: z.enum(['memory', 'r2']).default('memory'),
   R2_ACCOUNT_ID: z.string().default(''),

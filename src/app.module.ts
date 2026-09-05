@@ -8,6 +8,7 @@ import { AuthModule } from './modules/auth/auth.module.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
 import { PaymentsModule } from './modules/payments/payments.module.js';
 import { JobsModule } from './modules/jobs/jobs.module.js';
+import { VendorsModule } from './modules/vendors/vendors.module.js';
 import { ConfirmationsModule } from './modules/confirmations/confirmations.module.js';
 import { TrackingModule } from './modules/tracking/tracking.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
@@ -31,7 +32,7 @@ import { RolesGuard } from './common/auth/roles.guard.js';
 const dataModules = process.env.DB_DRIVER === 'postgres' ? [DatabaseModule, RedisModule] : [];
 
 @Module({
-  imports: [ConfigModule, ...dataModules, EmailModule, HealthModule, AuthModule, IdentityModule, PaymentsModule, JobsModule, ConfirmationsModule, TrackingModule, NotificationsModule, DisputesModule, RidersModule, DocumentsModule, AdminModule, WalletModule, AccountsModule, PresenceModule, ChatModule, SupportModule, ProfileModule, GeoModule],
+  imports: [ConfigModule, ...dataModules, EmailModule, HealthModule, AuthModule, IdentityModule, PaymentsModule, JobsModule, ConfirmationsModule, TrackingModule, NotificationsModule, DisputesModule, RidersModule, DocumentsModule, AdminModule, WalletModule, AccountsModule, PresenceModule, ChatModule, SupportModule, ProfileModule, GeoModule, VendorsModule],
   providers: [
     EncryptionService,
     // Order matters: authenticate first, then authorize.

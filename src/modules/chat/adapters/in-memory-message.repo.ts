@@ -7,7 +7,7 @@ import type { ChatMessage, MessageRepo, NewMessage, NewReport, MessageReport, Re
 export class InMemoryMessageRepo implements MessageRepo {
   private messages: ChatMessage[] = [];
   async add(n: NewMessage): Promise<ChatMessage> {
-    const msg: ChatMessage = { id: randomUUID(), jobId: n.jobId, senderId: n.senderId, body: n.body, createdAt: Date.now() };
+    const msg: ChatMessage = { id: randomUUID(), jobId: n.jobId, senderId: n.senderId, body: n.body, ...(n.replyToId ? { replyToId: n.replyToId } : {}), ...(n.audioKey ? { audioKey: n.audioKey } : {}), ...(n.audioDurationMs != null ? { audioDurationMs: n.audioDurationMs } : {}), ...(n.imageKey ? { imageKey: n.imageKey } : {}), createdAt: Date.now() };
     this.messages.push(msg);
     return msg;
   }

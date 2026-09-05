@@ -12,9 +12,12 @@ export class PrismaLedgerRepository implements LedgerRepository {
   /** Append a balanced set of entries in ONE transaction (all-or-nothing). Never updates rows. */
   async append(entries: readonly LedgerEntry[]): Promise<void> {
     await this.db.ledgerEntry.createMany({
+      // `account` is cast because the generated Prisma enum can lag a newly-added value (e.g.
+      // VENDOR_PAYABLE) in environments where `prisma generate` hasn't run against the latest schema;
+      // Railway regenerates at build, and the DB enum is migrated, so this is safe.
       data: entries.map((e) => ({
         jobId: e.jobId,
-        account: e.account,
+        account: e.account as never,
         direction: e.direction,
         amount: e.amount.amount,
       })),

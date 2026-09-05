@@ -2,14 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeFare, fareToMoney, FARE_CONFIG } from './fare.js';
 
-test('computes a deterministic delivery fare (4km, ~10 min ETA)', () => {
+test('computes a deterministic delivery fare (4km straight-line ≈ 5.6km road, ~22 min ETA)', () => {
   const b = computeFare('DELIVERY', 4000);
-  assert.equal(b.baseMinor, 50_000);       // ₦500 base
-  assert.equal(b.distanceMinor, 68_000);   // 4km × ₦170
-  assert.equal(b.timeMinor, 20_000);       // ~10 min × ₦20 (ETA at 24km/h)
-  assert.equal(b.platformFeeMinor, 13_800); // 10% of 138,000 subtotal
-  assert.equal(b.totalMinor, 151_800);
-  assert.equal(fareToMoney(b).amount, 151_800);
+  assert.equal(b.baseMinor, 70_000);        // ₦700 base
+  assert.equal(b.distanceMinor, 123_200);   // 5.6 road-km × ₦220
+  assert.equal(b.timeMinor, 44_000);        // ~22 min × ₦20 (ETA at 15km/h on road distance)
+  assert.equal(b.platformFeeMinor, 23_720); // 10% of 237,200 subtotal
+  assert.equal(b.totalMinor, 260_920);
+  assert.equal(fareToMoney(b).amount, 260_920);
 });
 
 test('breakdown rows always sum to the total (base + distance + time + fee)', () => {
@@ -33,10 +33,11 @@ test('time affects price — a longer duration costs more', () => {
   assert.equal(slow.timeMinor, 30 * FARE_CONFIG.perMinuteMinor);
 });
 
-test('a ~5km delivery nets the rider ₦1,500–₦2,000 (launch target)', () => {
+test('a ~5km delivery nets the rider about ₦2,800 (retuned target, vs the Lagos bike-dispatch market)', () => {
   const b = computeFare('DELIVERY', 5000);
   const riderNet = b.baseMinor + b.distanceMinor + b.timeMinor; // subtotal, before platform fee
-  assert.ok(riderNet >= 150_000 && riderNet <= 200_000, `riderNet=${riderNet}`);
+  assert.equal(riderNet, 280_000, `riderNet=${riderNet}`);       // ₦700 + 7 road-km×₦220 + 28 min×₦20
+  assert.ok(riderNet >= 270_000 && riderNet <= 300_000);
 });
 
 test('ride base is higher than delivery', () => {

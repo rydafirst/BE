@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JobsModule } from '../jobs/jobs.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { DocumentsModule } from '../documents/documents.module.js';
 import { ChatService } from './chat.service.js';
 import { ChatController } from './chat.controller.js';
 import { MESSAGE_REPO, REPORT_REPO } from './ports.js';
@@ -10,7 +11,7 @@ import { PrismaMessageRepo, PrismaReportRepo } from './adapters/prisma-message.r
 const usePg = process.env.DB_DRIVER === 'postgres';
 
 @Module({
-  imports: [JobsModule, NotificationsModule],
+  imports: [JobsModule, NotificationsModule, DocumentsModule],
   controllers: [ChatController],
   providers: [
     ChatService,

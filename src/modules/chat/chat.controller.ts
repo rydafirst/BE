@@ -1,12 +1,22 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-import { IsOptional, IsString, Length } from 'class-validator';
+import { IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { CurrentUser, type AuthUser } from '../../common/auth/current-user.decorator.js';
 import { ChatService } from './chat.service.js';
 import { MAX_MESSAGE_LEN } from './domain/message.js';
 
 class PostMessageDto {
-  @IsString() @Length(1, MAX_MESSAGE_LEN) body!: string;
+  // Body is optional: a voice-note message may carry only audio (or an optional caption).
+  @IsOptional() @IsString() @Length(1, MAX_MESSAGE_LEN) body?: string;
+  @IsOptional() @IsString() @Length(1, 64) replyToId?: string;
+  @IsOptional() @IsString() @Length(1, 256) audioKey?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(600000) audioDurationMs?: number;
+  @IsOptional() @IsString() @Length(1, 256) imageKey?: string;
+}
+
+class AttachmentUploadDto {
+  @IsString() @Length(1, 64) contentType!: string;
+  @IsInt() @Min(1) sizeBytes!: number;
 }
 
 class ReportMessageDto {
@@ -26,7 +36,21 @@ export class ChatController {
   @Post(':id/messages')
   @RequirePermission('job:read:own')
   post(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: PostMessageDto) {
-    return this.chat.post(user.id, id, dto.body);
+    return this.chat.post(user.id, id, dto.body, dto.replyToId, { ...(dto.audioKey ? { key: dto.audioKey } : {}), ...(dto.audioDurationMs != null ? { durationMs: dto.audioDurationMs } : {}) }, dto.imageKey);
+  }
+
+  /** Presigned URL to upload a voice note before sending it as a message on this job. */
+  @Post(':id/messages/audio-upload-url')
+  @RequirePermission('job:read:own')
+  audioUploadUrl(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AttachmentUploadDto) {
+    return this.chat.requestAudioUpload(user.id, id, dto.contentType, dto.sizeBytes);
+  }
+
+  /** Presigned URL to upload a photo before sending it as a message on this job. */
+  @Post(':id/messages/image-upload-url')
+  @RequirePermission('job:read:own')
+  imageUploadUrl(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AttachmentUploadDto) {
+    return this.chat.requestImageUpload(user.id, id, dto.contentType, dto.sizeBytes);
   }
 
   /** Flag an abusive/objectionable message for platform review (App Store Guideline 1.2). */

@@ -2,7 +2,7 @@ import { ConflictException, Inject, Injectable, Logger, Optional } from '@nestjs
 import { InlinePayoutDispatcher, PAYOUT_DISPATCHER, type PayoutDispatcher } from './payout-dispatcher.port.js';
 import { Money } from './domain/money.js';
 import { computeSettlement, type SettlementOutcome } from './domain/refund.js';
-import { buildHoldPosting, buildSettlementPosting } from './domain/escrow-posting.js';
+import { buildHoldPosting, buildSettlementPosting, buildVendorPayoutPosting } from './domain/escrow-posting.js';
 import { opKey } from './domain/idempotency.js';
 import { decideWebhook } from './domain/webhook-inbox.js';
 import { reconcile, type ReconciliationResult } from './domain/reconciliation.js';
@@ -116,6 +116,18 @@ export class EscrowService {
   }
 
   /**
+   * ERRAND top-up: hold an extra, separately-collected amount for a job when the shop price was higher
+   * than the customer typed. Keyed by the collection ref so multiple top-ups never collide with the
+   * main hold or each other; posts the escrow hold exactly once. The extra goes to the vendor on payout.
+   */
+  async confirmTopUpFunding(jobId: string, verified: VerifiedTxn, ref: string): Promise<void> {
+    const key = opKey('hold', jobId, `topup:${ref}`);
+    if ((await this.idem.get(key)) !== null) return; // already applied (idempotent)
+    await this.ledger.append(buildHoldPosting(jobId, Money.of(verified.amountMinor)));
+    await this.idem.put(key, { transactionId: verified.transactionId, txRef: verified.txRef });
+  }
+
+  /**
    * Release a funded waiting surcharge 100% to the rider (no platform cut — it's compensation for
    * their time). Durable + atomically idempotent under the 'waiting' settle key, so it can never
    * double-pay even if completion is retried.
@@ -166,6 +178,80 @@ export class EscrowService {
   /** Name enquiry for a bank + account number (so the client never types the account name). */
   resolveAccount(bankCode: string, accountNumber: string): Promise<{ accountName: string }> {
     return this.provider.resolveAccount({ bankCode, accountNumber });
+  }
+
+  /**
+   * Release an errand/marketplace order's goods-money to a VENDOR — never the rider. Same durable-
+   * ledger-then-best-effort-transfer contract as the rest of the engine, under a distinct 'vendor'
+   * settle key so it can't collide with the rider settlement, double-post, or double-pay:
+   *  - The ledger move (escrow -> vendor payable) is written FIRST and durably.
+   *  - The bank transfer is best-effort with a STABLE reference (idempotent at the PSP); a failure
+   *    returns payoutPending for the finance retry queue rather than throwing.
+   *  - The atomic claim guarantees exactly one caller posts the ledger, even under concurrent completes.
+   */
+  async settleVendorPayout(p: {
+    jobId: string;
+    amount: Money;
+    vendorAccount: { bankCode: string; accountNumber: string };
+    onPayoutSettled?: (result: SettleResult) => Promise<void>;
+  }): Promise<SettleResult> {
+    if (p.amount.isZero()) throw new ConflictException('Vendor payout amount must be positive');
+    const key = opKey('settle', p.jobId, 'vendor');
+    const existing = await this.idem.get<SettleResult>(key);
+    if (existing && !isPendingRecord(existing.result)) return existing.result;
+    const won = await this.idem.claim(key);
+    if (!won) {
+      const now = await this.idem.get<SettleResult>(key);
+      if (now && !isPendingRecord(now.result)) return now.result;
+      throw new ConflictException('Vendor payout already in progress for this job');
+    }
+    await this.ledger.append(buildVendorPayoutPosting(p.jobId, p.amount)); // DURABLE before any transfer
+    const persist = async (result: SettleResult): Promise<void> => {
+      await this.idem.complete(key, result);
+      if (p.onPayoutSettled) await p.onPayoutSettled(result);
+    };
+    return this.dispatcher.execute(
+      () => this.vendorTransfer(key, p.amount, p.vendorAccount),
+      persist,
+      { providerRef: '', payoutPending: true, payoutError: PAYOUT_QUEUED },
+    );
+  }
+
+  /**
+   * Re-attempt ONLY the vendor transfer for an order whose ledger is already released (admin "retry").
+   * Reads the last recorded ref so a transfer that already succeeded is never re-issued. Synchronous —
+   * the operator needs the real answer, not "queued".
+   */
+  async retryVendorPayout(p: { jobId: string; amount: Money; vendorAccount: { bankCode: string; accountNumber: string } }): Promise<SettleResult> {
+    const key = opKey('settle', p.jobId, 'vendor');
+    const cached = await this.idem.get<SettleResult>(key);
+    const prior = cached && !isPendingRecord(cached.result) ? cached.result : undefined;
+    const result = await this.vendorTransfer(key, p.amount, p.vendorAccount, prior);
+    await this.idem.complete(key, result);
+    return result;
+  }
+
+  /** The vendor bank transfer. Never throws — a failure is a pending flag. Skips if already sent. */
+  private async vendorTransfer(
+    key: string,
+    amount: Money,
+    account: { bankCode: string; accountNumber: string },
+    prior?: { transferRef?: string },
+  ): Promise<SettleResult> {
+    if (prior?.transferRef) return { providerRef: prior.transferRef, transferRef: prior.transferRef, payoutPending: false };
+    try {
+      const r = await this.provider.transfer({
+        amount,
+        bankCode: account.bankCode,
+        accountNumber: account.accountNumber,
+        reference: `${key}:vendor`, // stable ⇒ idempotent at the PSP (a repeat de-dupes, never double-pays)
+      });
+      return { providerRef: r.providerRef, transferRef: r.providerRef, payoutPending: false };
+    } catch (e) {
+      const error = reasonOf(e, 'vendor transfer failed');
+      this.log.error(`Vendor payout failed for ${key}: ${error}`);
+      return { providerRef: '', payoutPending: true, payoutError: error };
+    }
   }
 
   /**

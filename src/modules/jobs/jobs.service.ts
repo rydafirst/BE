@@ -1,7 +1,8 @@
 import {
   BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException,
-  UnauthorizedException,
+  Optional, UnauthorizedException,
 } from '@nestjs/common';
+import { MARKETPLACE_VENDOR_SOURCE, type MarketplaceVendorSource } from './marketplace.port.js';
 import { randomUUID } from 'node:crypto';
 import { ENV } from '../../config/config.module.js';
 import type { Env } from '../../config/env.validation.js';
@@ -45,7 +46,9 @@ import { CONTACT_CHANNEL, type ContactChannel } from './contact-channel.port.js'
 import { JOB_STATUS_LOG, type JobStatusLog } from './status-log.port.js';
 import { contactAllowed } from './domain/contact-window.js';
 import { CallSessionService } from '../calls/call-session.service.js';
-import type { QuoteRequestDto, CreateJobDto } from './dto/jobs.dto.js';
+import { namesMatch } from '../payments/domain/name-match.js';
+import type { ErrandDetails } from './domain/errand.js';
+import type { QuoteRequestDto, CreateJobDto, CreateErrandDto } from './dto/jobs.dto.js';
 
 const QUOTE_TTL_MS = 900_000; // 15 minutes — long enough to read options + pay without the quote going stale
 const PROGRESS_STEPS: readonly JobStatus[] = ['EN_ROUTE_PICKUP', 'AT_PICKUP', 'IN_PROGRESS', 'EN_ROUTE_DROP'];
@@ -83,6 +86,9 @@ export class JobsService {
     // delivery code uses in ConfirmationService). Optional so the few tests/scripts that construct
     // JobsService without a hasher keep working — a hasher is only ever needed by the multi-stop path.
     private readonly hasher: HmacHasher = new HmacHasher(env),
+    // Marketplace catalog read-port (bound to VendorsService in the module). Optional so the many
+    // tests/scripts that construct JobsService positionally keep working — only the checkout path needs it.
+    @Optional() @Inject(MARKETPLACE_VENDOR_SOURCE) private readonly vendorSource?: MarketplaceVendorSource,
   ) {}
 
   /**
@@ -320,6 +326,290 @@ export class JobsService {
   }
 
   /**
+   * ERRAND ("buy-for-me"): create the job + start collection. The trip (store -> customer) is quoted and
+   * priced exactly like a delivery; the customer's typed `goodsMinor` is added on top and held in escrow
+   * for the VENDOR (paid on the customer's approval at the store — see approveVendorAccount). The rider
+   * earns only the delivery fee (releaseFullToRider excludes the goods-money).
+   */
+  async createErrand(customerId: string, dto: CreateErrandDto): Promise<CreatedJob> {
+    const v = verifyQuote(dto.quoteToken, this.env.JOBS_QUOTE_SECRET, Date.now());
+    if (!v.ok) throw new BadRequestException(`Invalid quote (${v.reason})`);
+    if (v.payload.type !== 'ERRAND') throw new BadRequestException('Not an errand quote — re-quote as an errand');
+    const fare = computeFare('ERRAND', routeDistanceMeters([v.payload.pickup, v.payload.dropoff]));
+    if (fare.totalMinor !== v.payload.amountMinor) throw new BadRequestException('Quote no longer valid — please refresh your price');
+    const goodsMinor = Math.round(dto.goodsMinor);
+    if (!Number.isInteger(goodsMinor) || goodsMinor <= 0) throw new BadRequestException('Enter the amount to buy');
+
+    // One unpaid order at a time (same guard as delivery).
+    const existing = await this.jobs.listByCustomer(customerId);
+    for (const j of existing) {
+      const fresh = await this.expireIfStale(j);
+      if (fresh.status === 'CREATED') {
+        throw new ConflictException({ message: 'You have an order awaiting payment. Please complete or cancel it first.', pendingJobId: fresh.id });
+      }
+    }
+
+    const errand: ErrandDetails = {
+      goodsMinor,
+      deliveryFeeMinor: fare.totalMinor, // fixed — top-ups grow only the goods, never the rider's fee
+      shoppingList: dto.shoppingList,
+      ...(dto.storeName || dto.storeArea || dto.storeAddress
+        ? { store: { ...(dto.storeName ? { name: dto.storeName } : {}), ...(dto.storeArea ? { area: dto.storeArea } : {}), ...(dto.storeAddress ? { address: dto.storeAddress } : {}) } }
+        : {}),
+    };
+    const job: Job = {
+      id: randomUUID(), type: 'ERRAND', status: 'CREATED', customerId,
+      ...(dto.customerName ? { customerName: dto.customerName } : {}),
+      amountMinor: fare.totalMinor + goodsMinor, platformFeeMinor: fare.platformFeeMinor,
+      currency: 'NGN', refundAccountId: dto.refundAccountId ?? 'source',
+      pickup: v.payload.pickup, dropoff: v.payload.dropoff,
+      ...(dto.storeAddress ? { pickupAddress: dto.storeAddress } : {}),
+      ...(dto.dropoffAddress ? { dropoffAddress: dto.dropoffAddress } : {}),
+      ...(dto.storeArea ? { pickupArea: dto.storeArea } : {}),
+      ...(dto.dropoffArea ? { dropoffArea: dto.dropoffArea } : {}),
+      errand,
+      createdAt: new Date().toISOString(),
+    };
+    await this.jobs.create(job);
+
+    const redirectUrl = dto.returnUrl?.startsWith('rydafirst://') ? dto.returnUrl : `${this.env.WEB_APP_URL}/jobs/${job.id}/track`;
+    const email = await this.collectionEmail(customerId);
+    const { txRef, link } = await this.escrow.beginCollection(job.id, Money.of(job.amountMinor), email, redirectUrl);
+    await this.jobs.setPaymentRefs(job.id, { txRef });
+    return { ...job, flwTxRef: txRef, paymentLink: link };
+  }
+
+  /**
+   * MARKETPLACE order: the customer buys listed products from an APPROVED vendor. Prices are read
+   * server-side from the catalog (never trusted from the body); the vendor's stored, pre-verified
+   * business account is used and pre-approved, so on delivery the vendor is paid automatically (see
+   * releaseFullToRider) — the rider only ever earns the delivery fee. Modelled as an ERRAND job so it
+   * reuses the whole escrow / tracking / chat / receipt spine.
+   */
+  async createMarketplaceOrder(customerId: string, dto: {
+    vendorId: string; items: { productId: string; quantity: number }[]; quoteToken: string;
+    dropoffAddress?: string; dropoffArea?: string; customerName?: string; refundAccountId?: string; returnUrl?: string;
+  }): Promise<CreatedJob> {
+    if (!this.vendorSource) throw new BadRequestException('Marketplace is not available');
+    const vendor = await this.vendorSource.getForOrder(dto.vendorId);
+    if (!vendor.account) throw new ConflictException('This vendor cannot accept orders yet');
+    if (vendor.shopLat == null || vendor.shopLng == null) throw new ConflictException('This vendor has not set a shop location yet');
+    if (!Array.isArray(dto.items) || dto.items.length === 0) throw new BadRequestException('Your cart is empty');
+
+    // Authoritative pricing: read each product from the catalog; reject foreign/unavailable items.
+    let goodsMinor = 0;
+    const lines: string[] = [];
+    for (const it of dto.items) {
+      const qty = Math.round(it.quantity);
+      if (!Number.isInteger(qty) || qty < 1 || qty > 50) throw new BadRequestException('Invalid item quantity');
+      const p = await this.vendorSource.findProduct(it.productId);
+      if (!p || p.vendorId !== vendor.id) throw new BadRequestException('One of the items is not from this vendor');
+      if (!p.available) throw new ConflictException(`“${p.name}” is no longer available`);
+      goodsMinor += p.priceMinor * qty;
+      lines.push(`${qty}× ${p.name}`);
+    }
+    if (goodsMinor <= 0) throw new BadRequestException('Your cart total is empty');
+
+    // The trip is quoted vendor-shop → customer. Bind the quote's pickup to the vendor's real shop
+    // location so a client can't quote a cheaper short trip than the goods will actually travel.
+    const v = verifyQuote(dto.quoteToken, this.env.JOBS_QUOTE_SECRET, Date.now());
+    if (!v.ok) throw new BadRequestException(`Invalid quote (${v.reason})`);
+    if (v.payload.type !== 'ERRAND') throw new BadRequestException('Not a delivery quote — re-quote this order');
+    if (haversineMeters(v.payload.pickup, { lat: vendor.shopLat, lng: vendor.shopLng }) > 200) {
+      throw new BadRequestException('Quote pickup does not match the vendor shop — please refresh');
+    }
+    const fare = computeFare('ERRAND', routeDistanceMeters([v.payload.pickup, v.payload.dropoff]));
+    if (fare.totalMinor !== v.payload.amountMinor) throw new BadRequestException('Quote no longer valid — please refresh your price');
+
+    // One unpaid order at a time (same guard as delivery/errand).
+    const existing = await this.jobs.listByCustomer(customerId);
+    for (const j of existing) {
+      const fresh = await this.expireIfStale(j);
+      if (fresh.status === 'CREATED') {
+        throw new ConflictException({ message: 'You have an order awaiting payment. Please complete or cancel it first.', pendingJobId: fresh.id });
+      }
+    }
+
+    const errand: ErrandDetails = {
+      goodsMinor,
+      deliveryFeeMinor: fare.totalMinor,
+      shoppingList: lines.join(', '),
+      store: { name: vendor.businessName, ...(vendor.area ? { area: vendor.area } : {}) },
+      vendorAccount: vendor.account,
+      vendorApproved: true,
+      autoVendorPayout: true,
+      marketplaceVendorId: vendor.id,
+    };
+    const job: Job = {
+      id: randomUUID(), type: 'ERRAND', status: 'CREATED', customerId,
+      ...(dto.customerName ? { customerName: dto.customerName } : {}),
+      amountMinor: fare.totalMinor + goodsMinor, platformFeeMinor: fare.platformFeeMinor,
+      currency: 'NGN', refundAccountId: dto.refundAccountId ?? 'source',
+      pickup: v.payload.pickup, dropoff: v.payload.dropoff,
+      ...(dto.dropoffAddress ? { dropoffAddress: dto.dropoffAddress } : {}),
+      ...(dto.dropoffArea ? { dropoffArea: dto.dropoffArea } : {}),
+      pickupAddress: vendor.businessName,
+      ...(vendor.area ? { pickupArea: vendor.area } : {}),
+      errand,
+      createdAt: new Date().toISOString(),
+    };
+    await this.jobs.create(job);
+
+    const redirectUrl = dto.returnUrl?.startsWith('rydafirst://') ? dto.returnUrl : `${this.env.WEB_APP_URL}/jobs/${job.id}/track`;
+    const email = await this.collectionEmail(customerId);
+    const { txRef, link } = await this.escrow.beginCollection(job.id, Money.of(job.amountMinor), email, redirectUrl);
+    await this.jobs.setPaymentRefs(job.id, { txRef });
+    return { ...job, flwTxRef: txRef, paymentLink: link };
+  }
+
+  /**
+   * ERRAND: the assigned rider captures the vendor's BUSINESS account at the store. The server resolves
+   * the real account name (name enquiry) and scores it against the store name the customer gave — the
+   * customer then approves before any money moves. The rider never types the name, and only bankCode +
+   * number are trusted from the client. Returns the resolved name + whether it looks like a match.
+   */
+  async captureVendorAccount(riderId: string, jobId: string, bankCode: string, accountNumber: string): Promise<{ accountName: string; match: boolean }> {
+    const job = await this.assertAssigned(jobId, riderId);
+    if (job.type !== 'ERRAND' || !job.errand) throw new ConflictException('This delivery is not an errand');
+    const { accountName } = await this.escrow.resolveAccount(bankCode, accountNumber);
+    const match = job.errand.store?.name ? namesMatch(job.errand.store.name, accountName) : false;
+    await this.jobs.setErrand(jobId, { ...job.errand, vendorAccount: { bankCode, accountNumber, accountName }, vendorApproved: false });
+    return { accountName, match };
+  }
+
+  /**
+   * ERRAND: the CUSTOMER approves the resolved vendor account, which releases the goods-money to that
+   * account (via EscrowService.settleVendorPayout — vendor, never rider). Idempotent: the vendor payout
+   * de-dupes at the PSP, so a repeated approval never double-pays.
+   */
+  async approveVendorAccount(customerId: string, jobId: string): Promise<{ paidPending: boolean }> {
+    const job = await this.mustFind(jobId);
+    if (job.customerId !== customerId) throw new ForbiddenException();
+    if (job.type !== 'ERRAND' || !job.errand) throw new ConflictException('This delivery is not an errand');
+    const errand = job.errand;
+    if (!errand.vendorAccount) throw new ConflictException('The rider has not entered the vendor account yet');
+    if (errand.vendorPaidAt) return { paidPending: false }; // already paid (idempotent)
+
+    await this.jobs.setErrand(jobId, { ...errand, vendorApproved: true });
+    const res = await this.escrow.settleVendorPayout({
+      jobId,
+      amount: Money.of(errand.goodsMinor),
+      vendorAccount: { bankCode: errand.vendorAccount.bankCode, accountNumber: errand.vendorAccount.accountNumber },
+      onPayoutSettled: async (r) => {
+        const cur = (await this.jobs.find(jobId))?.errand ?? errand;
+        await this.jobs.setErrand(jobId, {
+          ...cur, vendorApproved: true,
+          ...(r.transferRef ? { vendorPayoutRef: r.transferRef } : {}),
+          ...(!r.payoutPending ? { vendorPaidAt: Date.now() } : {}),
+        });
+      },
+    });
+    return { paidPending: res.payoutPending };
+  }
+
+  /** MARKETPLACE: the vendor's own incoming orders + payout status (owner-scoped, never leaks other data). */
+  async vendorOrders(ownerUserId: string): Promise<Array<{
+    id: string; status: JobStatus; createdAt: string; goodsMinor: number; deliveryFeeMinor: number;
+    items: string; customerName?: string; vendorPaidAt?: number; vendorPayoutRef?: string;
+  }>> {
+    if (!this.vendorSource) return [];
+    const vendorId = await this.vendorSource.findVendorIdByOwner(ownerUserId);
+    if (!vendorId) return [];
+    const jobs = await this.jobs.listByMarketplaceVendor(vendorId, 100);
+    return jobs
+      .filter((j) => j.status !== 'CREATED') // hide unpaid/abandoned orders
+      .map((j) => ({
+        id: j.id, status: j.status as JobStatus, createdAt: j.createdAt,
+        goodsMinor: j.errand?.goodsMinor ?? 0,
+        deliveryFeeMinor: j.errand?.deliveryFeeMinor ?? 0,
+        items: j.errand?.shoppingList ?? '',
+        ...(j.customerName ? { customerName: j.customerName } : {}),
+        ...(j.errand?.vendorPaidAt ? { vendorPaidAt: j.errand.vendorPaidAt } : {}),
+        ...(j.errand?.vendorPayoutRef ? { vendorPayoutRef: j.errand.vendorPayoutRef } : {}),
+      }));
+  }
+
+  /**
+   * ERRAND: a receipt the rider can show the vendor (and the customer keeps) as proof the shop was paid.
+   * Amounts and the payout reference are read from the authoritative job/errand record — never the client.
+   * Visible to the order's customer or its assigned rider only, and only once the vendor has been paid.
+   */
+  async errandReceipt(actorId: string, jobId: string): Promise<{
+    receiptNo: string; orderId: string; paidAt: number; amountMinor: number; currency: 'NGN';
+    vendorName: string; vendorAccountMasked: string; payoutRef?: string; store?: string; shoppingList: string;
+  }> {
+    const job = await this.mustFind(jobId);
+    if (job.customerId !== actorId && job.riderId !== actorId) throw new ForbiddenException();
+    if (job.type !== 'ERRAND' || !job.errand) throw new ConflictException('This delivery is not an errand');
+    const e = job.errand;
+    if (!e.vendorPaidAt || !e.vendorAccount) throw new ConflictException('The shop has not been paid yet');
+    const acct = e.vendorAccount.accountNumber;
+    const masked = acct.length > 4 ? `${'•'.repeat(Math.max(0, acct.length - 4))}${acct.slice(-4)}` : acct;
+    return {
+      receiptNo: `RYDA-${job.id.replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase()}`,
+      orderId: job.id,
+      paidAt: e.vendorPaidAt,
+      amountMinor: e.goodsMinor,
+      currency: 'NGN',
+      vendorName: e.vendorAccount.accountName,
+      vendorAccountMasked: masked,
+      ...(e.vendorPayoutRef ? { payoutRef: e.vendorPayoutRef } : {}),
+      ...(e.store?.name ? { store: e.store.name } : {}),
+      shoppingList: e.shoppingList,
+    };
+  }
+
+  /** ERRAND: the rider flags the shop price is higher — asks the customer to add `additionalMinor`. */
+  async requestErrandTopUp(riderId: string, jobId: string, additionalMinor: number): Promise<{ requestedTopUpMinor: number }> {
+    const job = await this.assertAssigned(jobId, riderId);
+    if (job.type !== 'ERRAND' || !job.errand) throw new ConflictException('This delivery is not an errand');
+    if (job.errand.vendorPaidAt) throw new ConflictException('The shop has already been paid');
+    const add = Math.round(additionalMinor);
+    if (!Number.isInteger(add) || add <= 0 || add > 100_000_000) throw new BadRequestException('Enter a valid top-up amount');
+    await this.jobs.setErrand(jobId, { ...job.errand, requestedTopUpMinor: add });
+    await this.notify.record(job.customerId, {
+      title: 'Your rider needs a bit more',
+      body: `The items cost more than expected — open the app to add ₦${(add / 100).toLocaleString('en-NG')} so your rider can pay the shop.`,
+      jobId, urgent: true,
+    });
+    return { requestedTopUpMinor: add };
+  }
+
+  /** ERRAND: the customer starts paying the requested top-up; returns the hosted-checkout link. */
+  async startErrandTopUp(customerId: string, jobId: string, returnUrl?: string): Promise<{ paymentLink: string; amountMinor: number }> {
+    const job = await this.mustFind(jobId);
+    if (job.customerId !== customerId) throw new ForbiddenException();
+    if (job.type !== 'ERRAND' || !job.errand) throw new ConflictException('This delivery is not an errand');
+    if (job.errand.vendorPaidAt) throw new ConflictException('The shop has already been paid');
+    const add = job.errand.requestedTopUpMinor ?? 0;
+    if (add <= 0) throw new ConflictException('No top-up has been requested');
+    const email = await this.collectionEmail(customerId);
+    const redirect = returnUrl?.startsWith('rydafirst://') ? returnUrl : `${this.env.WEB_APP_URL}/jobs/${jobId}/track`;
+    const { txRef, link } = await this.escrow.beginCollection(jobId, Money.of(add), email, redirect);
+    await this.jobs.setErrand(jobId, { ...job.errand, topUpTxRef: txRef });
+    return { paymentLink: link, amountMinor: add };
+  }
+
+  /** ERRAND: verify a paid top-up and apply it — adds the extra to the goods (held for the vendor). */
+  async confirmErrandTopUp(customerId: string, jobId: string, transactionId: string): Promise<{ funded: boolean; goodsMinor: number }> {
+    const job = await this.mustFind(jobId);
+    if (job.customerId !== customerId) throw new ForbiddenException();
+    if (job.type !== 'ERRAND' || !job.errand) throw new ConflictException('This delivery is not an errand');
+    const errand = job.errand;
+    if (!errand.topUpTxRef) return { funded: false, goodsMinor: errand.goodsMinor };
+    if (errand.topUpTxId) return { funded: true, goodsMinor: errand.goodsMinor }; // already applied (idempotent)
+    const verified = await this.escrow.verifyTransaction(transactionId);
+    if (verified.status !== 'successful') return { funded: false, goodsMinor: errand.goodsMinor };
+    if (verified.txRef !== errand.topUpTxRef) throw new BadRequestException('This payment is not for this top-up');
+    await this.escrow.confirmTopUpFunding(jobId, verified, verified.txRef);
+    await this.jobs.setErrand(jobId, {
+      ...errand, goodsMinor: errand.goodsMinor + verified.amountMinor, topUpTxId: verified.transactionId,
+      requestedTopUpMinor: 0, topUpTxRef: undefined,
+    });
+    return { funded: true, goodsMinor: errand.goodsMinor + verified.amountMinor };
+  }
+
+  /**
    * Re-issue a checkout link for an order the customer started but didn't finish paying — WITHOUT
    * recreating the trip, so their details are reused. Double-charge safe: stale orders are expired
    * first, then we re-issue ONLY while the order is still CREATED (unfunded on our side). If the first
@@ -350,6 +640,20 @@ export class JobsService {
         await this.jobs.setWaitingRefs(job.id, { txId: verified.transactionId });
         if (job.riderId) {
           await this.notify.record(job.riderId, { title: 'Waiting fee paid', body: 'The customer paid the waiting fee — you can hand over the package now.', jobId: job.id, urgent: true });
+        }
+      }
+      return { funded: true };
+    }
+    // An errand top-up rides on its own txRef: fund the extra goods-money, not a new fare.
+    if (job.type === 'ERRAND' && job.errand?.topUpTxRef === verified.txRef) {
+      if (!job.errand.topUpTxId) {
+        await this.escrow.confirmTopUpFunding(job.id, verified, verified.txRef);
+        await this.jobs.setErrand(job.id, {
+          ...job.errand, goodsMinor: job.errand.goodsMinor + verified.amountMinor,
+          topUpTxId: verified.transactionId, requestedTopUpMinor: 0, topUpTxRef: undefined,
+        });
+        if (job.riderId) {
+          await this.notify.record(job.riderId, { title: 'Top-up paid', body: 'The customer added the extra money — you can pay the shop now.', jobId: job.id, urgent: true });
         }
       }
       return { funded: true };
@@ -631,6 +935,26 @@ export class JobsService {
   }
 
   /**
+   * #4 MULTI-STOP: (re-)reveal an extra stop's confirmation code to the booking customer.
+   *
+   * Extra-stop codes are stored HASHED, so — exactly like the primary drop-off's "Reveal code" — we mint
+   * a FRESH code, save its hash on the stop, and hand back the plaintext. This removes the "screenshot the
+   * codes at booking or you can never see them again" trap: the customer can reveal each stop's current
+   * code on the tracking page whenever they reach that stop. `index` is 0-based within extraStops (extra
+   * stop #1 = index 0, i.e. the delivery's stop #2 overall).
+   */
+  async issueStopCode(customerId: string, jobId: string, index: number): Promise<{ code: string }> {
+    const job = await this.mustFind(jobId);
+    if (job.customerId !== customerId) throw new ForbiddenException();
+    const stop = (job.extraStops ?? [])[index];
+    if (!stop) throw new NotFoundException('Stop not found');
+    if (stop.status === 'DELIVERED') throw new ConflictException('This stop has already been delivered');
+    const code = generateCode();
+    await this.jobs.setExtraStopCode(jobId, index, this.hasher.hash(code));
+    return { code };
+  }
+
+  /**
    * The single writer of a job's payout state.
    *
    * Payout state must be written from here and NOWHERE else on a settle path. The external
@@ -657,8 +981,15 @@ export class JobsService {
     await this.transitionTo(job.id, 'COMPLETED');
     const riderPayout = await this.payout.getPayout(riderId);
     // Release only the FARE portion here; any pre-charged return reserve is settled separately by
-    // the caller (refunded on delivery, or paid to the rider on an actual return).
-    const fareMinor = job.amountMinor - (job.returnReserveMinor ?? 0);
+    // the caller (refunded on delivery, or paid to the rider on an actual return). For an ERRAND, the
+    // goods-money belongs to the VENDOR (paid separately on customer approval) — never the rider — so
+    // it is excluded here too: the rider earns only the delivery fee.
+    // For an ERRAND the rider earns the FIXED delivery fee (stored at creation) — decoupled from the
+    // goods so in-app top-ups grow only the vendor's amount, never the rider's. Falls back to the
+    // (amount − goods) form for any legacy errand created before the fee was stored.
+    const fareMinor = job.errand
+      ? (job.errand.deliveryFeeMinor ?? (job.amountMinor - job.errand.goodsMinor))
+      : job.amountMinor - (job.returnReserveMinor ?? 0);
 
     // Confirm the DELIVERY as soon as it is durable, independently of the money leaving the bank.
     // These are two different facts to the rider and they no longer arrive together: the payout may
@@ -696,6 +1027,25 @@ export class JobsService {
     // If a waiting fee was funded, release it 100% to the rider on top of the fare (idempotent).
     if (job.waitingFeeMinor && job.waitingTxId) {
       await this.escrow.settleWaitingToRider(job.id, Money.of(job.waitingFeeMinor), riderPayout ?? undefined);
+    }
+    // MARKETPLACE order: the vendor account is pre-verified + pre-approved (no rider capture / customer
+    // approval step), so the vendor is paid the goods-money automatically on delivery confirmation.
+    // Idempotent via settleVendorPayout's stable ref, so a retried completion never double-pays.
+    const errand = job.errand;
+    if (errand?.autoVendorPayout && errand.vendorAccount && !errand.vendorPaidAt && errand.goodsMinor > 0) {
+      const vendorAccount = errand.vendorAccount;
+      await this.escrow.settleVendorPayout({
+        jobId: job.id, amount: Money.of(errand.goodsMinor),
+        vendorAccount: { bankCode: vendorAccount.bankCode, accountNumber: vendorAccount.accountNumber },
+        onPayoutSettled: async (r) => {
+          const cur = (await this.jobs.find(job.id))?.errand ?? errand;
+          await this.jobs.setErrand(job.id, {
+            ...cur,
+            ...(r.transferRef ? { vendorPayoutRef: r.transferRef } : {}),
+            ...(!r.payoutPending ? { vendorPaidAt: Date.now() } : {}),
+          });
+        },
+      });
     }
     return res;
   }

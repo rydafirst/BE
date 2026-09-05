@@ -255,6 +255,31 @@ test('MONEY: stops must be confirmed IN ORDER — the last stop cannot jump ahea
   assert.equal(deriveBalance(ledger.entries, 'RIDER_PAYABLE').amount, 0);
 });
 
+test('CODE REVEAL: the customer can re-reveal a stop code, and the old booking code stops working', async () => {
+  const { svc } = build();
+  const created = await bookMultiStop(svc, 'cust-reveal');
+  await driveToPrimaryDrop(svc, created.id);
+  await svc.completeDelivery(RIDER_ID, created.id); // -> EN_ROUTE_STOP
+
+  const oldCode = created.extraStopCodes![0]!;
+  const { code: newCode } = await svc.issueStopCode('cust-reveal', created.id, 0);
+  assert.notEqual(newCode, oldCode, 're-reveal mints a FRESH code');
+
+  // Single-use is preserved on re-issue: the old booking code no longer confirms the stop.
+  await assert.rejects(
+    () => svc.confirmStop(RIDER_ID, created.id, 0, oldCode, STOP_A, 0),
+    (e: unknown) => e instanceof UnauthorizedException,
+  );
+  // The freshly revealed code does confirm it.
+  assert.equal((await svc.confirmStop(RIDER_ID, created.id, 0, newCode, STOP_A, 0)).status, 'EN_ROUTE_STOP');
+});
+
+test('CODE REVEAL: only the booking customer may reveal a stop code', async () => {
+  const { svc } = build();
+  const created = await bookMultiStop(svc, 'cust-owner');
+  await assert.rejects(() => svc.issueStopCode('someone-else', created.id, 0));
+});
+
 test('MONEY (regression): a single-stop job is UNCHANGED — the one code releases immediately', async () => {
   const { svc, repo, ledger, provider } = build();
   const fare = computeFare('DELIVERY', haversineMeters(PICKUP, DROPOFF));

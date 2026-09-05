@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /** A quote is signed server-side and short-lived so the client cannot tamper with the price. */
 export interface QuotePayload {
-  type: 'DELIVERY' | 'RIDE';
+  type: 'DELIVERY' | 'RIDE' | 'ERRAND';
   amountMinor: number; // kobo
   currency: 'NGN';
   pickup: { lat: number; lng: number };

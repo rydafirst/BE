@@ -34,3 +34,17 @@ export function buildSettlementPosting(jobId: string, settlement: Settlement): L
   assertBalanced(entries);
   return entries;
 }
+
+/**
+ * VENDOR PAYOUT: goods-money for an errand/marketplace order moves from escrow to the vendor. This is
+ * a SEPARATE leg from the rider settlement — the rider is never credited the goods-money, so a rider
+ * can never be paid the customer's purchase amount. Balanced: escrow debit == vendor credit.
+ */
+export function buildVendorPayoutPosting(jobId: string, amount: Money): LedgerEntry[] {
+  const entries: LedgerEntry[] = [
+    { jobId, account: 'ESCROW', direction: 'DEBIT', amount },
+    { jobId, account: 'VENDOR_PAYABLE', direction: 'CREDIT', amount },
+  ];
+  assertBalanced(entries);
+  return entries;
+}

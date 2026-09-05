@@ -8,8 +8,9 @@ export type LaunchCity = 'LAGOS' | 'ABUJA' | 'PORT_HARCOURT' | 'OTHER';
 export interface EffectiveSettings {
   requireGuarantor: boolean;
   enforceRiderClearance: boolean;
+  marketplaceEnabled: boolean;
   launchCity: LaunchCity;
-  overridden: { requireGuarantor: boolean; enforceRiderClearance: boolean; launchCity: boolean };
+  overridden: { requireGuarantor: boolean; enforceRiderClearance: boolean; marketplaceEnabled: boolean; launchCity: boolean };
 }
 
 /**
@@ -33,10 +34,12 @@ export class SettingsService {
     return {
       requireGuarantor: 'requireGuarantor' in o ? o.requireGuarantor === 'true' : this.env.REQUIRE_GUARANTOR,
       enforceRiderClearance: 'enforceRiderClearance' in o ? o.enforceRiderClearance === 'true' : this.env.ENFORCE_RIDER_CLEARANCE,
+      marketplaceEnabled: 'marketplaceEnabled' in o ? o.marketplaceEnabled === 'true' : this.env.MARKETPLACE_ENABLED,
       launchCity: ('launchCity' in o ? o.launchCity : this.env.LAUNCH_CITY) as LaunchCity,
       overridden: {
         requireGuarantor: 'requireGuarantor' in o,
         enforceRiderClearance: 'enforceRiderClearance' in o,
+        marketplaceEnabled: 'marketplaceEnabled' in o,
         launchCity: 'launchCity' in o,
       },
     };
@@ -44,12 +47,14 @@ export class SettingsService {
 
   async requireGuarantor(): Promise<boolean> { return (await this.effective()).requireGuarantor; }
   async enforceRiderClearance(): Promise<boolean> { return (await this.effective()).enforceRiderClearance; }
+  async marketplaceEnabled(): Promise<boolean> { return (await this.effective()).marketplaceEnabled; }
   async launchCity(): Promise<LaunchCity> { return (await this.effective()).launchCity; }
 
-  async update(patch: { requireGuarantor?: boolean; enforceRiderClearance?: boolean; launchCity?: LaunchCity }): Promise<EffectiveSettings> {
+  async update(patch: { requireGuarantor?: boolean; enforceRiderClearance?: boolean; marketplaceEnabled?: boolean; launchCity?: LaunchCity }): Promise<EffectiveSettings> {
     const kv: Record<string, string> = {};
     if (patch.requireGuarantor !== undefined) kv.requireGuarantor = String(patch.requireGuarantor);
     if (patch.enforceRiderClearance !== undefined) kv.enforceRiderClearance = String(patch.enforceRiderClearance);
+    if (patch.marketplaceEnabled !== undefined) kv.marketplaceEnabled = String(patch.marketplaceEnabled);
     if (patch.launchCity !== undefined) kv.launchCity = patch.launchCity;
     if (Object.keys(kv).length) await this.store.setMany(kv);
     return this.effective();

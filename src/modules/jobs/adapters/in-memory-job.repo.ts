@@ -31,8 +31,14 @@ export class InMemoryJobRepo implements JobRepository {
   async listByCustomer(customerId: string): Promise<Job[]> {
     return [...this.m.values()].filter((j) => j.customerId === customerId);
   }
+  async listByMarketplaceVendor(vendorId: string, limit: number): Promise<Job[]> {
+    return [...this.m.values()]
+      .filter((j) => j.errand?.marketplaceVendorId === vendorId)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      .slice(0, limit);
+  }
   async findByTxRef(txRef: string): Promise<Job | null> {
-    return [...this.m.values()].find((j) => j.flwTxRef === txRef || j.waitingTxRef === txRef) ?? null;
+    return [...this.m.values()].find((j) => j.flwTxRef === txRef || j.waitingTxRef === txRef || j.errand?.topUpTxRef === txRef) ?? null;
   }
   async setArrivedAt(id: string, atMs: number): Promise<void> {
     const j = this.m.get(id); if (j) j.arrivedAt = atMs;
@@ -73,6 +79,14 @@ export class InMemoryJobRepo implements JobRepository {
   async incrementExtraStopAttempts(id: string, index: number): Promise<void> {
     const s = this.m.get(id)?.extraStops?.[index];
     if (s) s.attempts = (s.attempts ?? 0) + 1;
+  }
+  async setExtraStopCode(id: string, index: number, codeHash: string): Promise<void> {
+    const s = this.m.get(id)?.extraStops?.[index];
+    if (s) { s.codeHash = codeHash; s.attempts = 0; }
+  }
+  async setErrand(id: string, errand: import('../domain/errand.js').ErrandDetails): Promise<void> {
+    const j = this.m.get(id);
+    if (j) j.errand = errand;
   }
   async claim(id: string, riderId: string): Promise<boolean> {
     const j = this.m.get(id);

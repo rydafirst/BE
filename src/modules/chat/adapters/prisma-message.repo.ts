@@ -2,9 +2,21 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
 import type { ChatMessage, MessageRepo, NewMessage, MessageReport, NewReport, ReportRepo } from '../ports.js';
 
-interface Row { id: string; jobId: string; senderId: string; body: string; createdAt: Date }
+// The generated Prisma client can lag the schema in environments where `prisma generate` hasn't run
+// against the newest column (e.g. offline CI). `never` lets the write type-check both there and in prod,
+// exactly as the job repo does; at build time the real generated types are used.
+type PrismaWrite = never;
+
+interface Row { id: string; jobId: string; senderId: string; body: string; replyToId: string | null; audioKey: string | null; audioDurationMs: number | null; imageKey: string | null; createdAt: Date }
 function toMessage(r: Row): ChatMessage {
-  return { id: r.id, jobId: r.jobId, senderId: r.senderId, body: r.body, createdAt: r.createdAt.getTime() };
+  return {
+    id: r.id, jobId: r.jobId, senderId: r.senderId, body: r.body,
+    ...(r.replyToId ? { replyToId: r.replyToId } : {}),
+    ...(r.audioKey ? { audioKey: r.audioKey } : {}),
+    ...(r.audioDurationMs != null ? { audioDurationMs: r.audioDurationMs } : {}),
+    ...(r.imageKey ? { imageKey: r.imageKey } : {}),
+    createdAt: r.createdAt.getTime(),
+  };
 }
 
 /** Postgres-backed chat messages (persistent, one row per message). */
@@ -14,17 +26,17 @@ export class PrismaMessageRepo implements MessageRepo {
 
   async add(n: NewMessage): Promise<ChatMessage> {
     const row = await this.db.chatMessage.create({
-      data: { jobId: n.jobId, senderId: n.senderId, body: n.body },
+      data: { jobId: n.jobId, senderId: n.senderId, body: n.body, replyToId: n.replyToId ?? null, audioKey: n.audioKey ?? null, audioDurationMs: n.audioDurationMs ?? null, imageKey: n.imageKey ?? null } as PrismaWrite,
     });
-    return toMessage(row as Row);
+    return toMessage(row as unknown as Row);
   }
   async listForJob(jobId: string, limit: number): Promise<ChatMessage[]> {
     const rows = await this.db.chatMessage.findMany({ where: { jobId }, orderBy: { createdAt: 'asc' }, take: limit });
-    return (rows as Row[]).map(toMessage);
+    return (rows as unknown as Row[]).map(toMessage);
   }
   async find(jobId: string, messageId: string): Promise<ChatMessage | null> {
     const row = await this.db.chatMessage.findFirst({ where: { id: messageId, jobId } });
-    return row ? toMessage(row as Row) : null;
+    return row ? toMessage(row as unknown as Row) : null;
   }
 }
 

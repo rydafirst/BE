@@ -3,12 +3,22 @@ export interface ChatMessage {
   jobId: string;
   senderId: string;
   body: string;
+  replyToId?: string; // the message this one replies to (in-thread quote), if any
+  audioKey?: string;  // stored object key for a voice note (internal — never sent to a client)
+  audioUrl?: string;  // short-lived signed playback URL, resolved at read time from audioKey
+  audioDurationMs?: number; // voice-note length for the player UI
+  imageKey?: string;  // stored object key for a photo attachment (internal — never sent to a client)
+  imageUrl?: string;  // short-lived signed view URL, resolved at read time from imageKey
   createdAt: number;
 }
 export interface NewMessage {
   jobId: string;
   senderId: string;
   body: string;
+  replyToId?: string;
+  audioKey?: string;
+  audioDurationMs?: number;
+  imageKey?: string;
 }
 
 export interface MessageRepo {

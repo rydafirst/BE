@@ -10,7 +10,7 @@ export class GeoPointDto {
 }
 
 export class QuoteRequestDto {
-  @IsIn(['DELIVERY', 'RIDE']) type!: 'DELIVERY' | 'RIDE';
+  @IsIn(['DELIVERY', 'RIDE', 'ERRAND']) type!: 'DELIVERY' | 'RIDE' | 'ERRAND';
   @ValidateNested() @Type(() => GeoPointDto) pickup!: GeoPointDto;
   @ValidateNested() @Type(() => GeoPointDto) dropoff!: GeoPointDto;
   // #4 MULTI-STOP: extra drop-off POINTS after the primary dropoff, in order. Optional — omitting it
@@ -56,6 +56,57 @@ export class CreateJobDto {
   @ValidateNested({ each: true }) @Type(() => ExtraStopDto) extraStops?: ExtraStopDto[];
   // Mobile deep-link return target after payment (validated against an allow-list server-side).
   @IsOptional() @IsString() @Length(1, 200) returnUrl?: string;
+}
+
+// ERRAND ("buy-for-me"): the customer quotes the store -> customer trip (type ERRAND) and types the
+// goods amount. `goodsMinor` is held in escrow and paid to the vendor; the trip is priced like a delivery.
+export class CreateErrandDto {
+  @IsString() @Length(16, 1024) quoteToken!: string;
+  @IsNumber() @Min(100) @Max(100_000_000) goodsMinor!: number; // ₦1 .. ₦1,000,000 (safety ceiling)
+  @IsString() @Length(1, 800) shoppingList!: string;           // what to buy
+  @IsOptional() @IsString() @Length(1, 120) storeName?: string;
+  @IsOptional() @IsString() @Length(1, 120) storeArea?: string;
+  @IsOptional() @IsString() @Length(1, 300) storeAddress?: string;
+  @IsOptional() @IsString() @Length(1, 300) dropoffAddress?: string; // where to deliver to the customer
+  @IsOptional() @IsString() @Length(1, 120) dropoffArea?: string;
+  @IsOptional() @IsString() @Length(1, 80) customerName?: string;
+  @IsOptional() @IsString() @Length(1, 64) refundAccountId?: string;
+  @IsOptional() @IsString() @Length(1, 200) returnUrl?: string;
+}
+
+// The rider captures the vendor's BUSINESS account at the store; the server resolves the name for the
+// customer to approve. Only these two fields are trusted from the client — the name comes from the bank.
+export class VendorAccountDto {
+  @IsString() @Length(3, 10) bankCode!: string;
+  @IsString() @Length(6, 20) accountNumber!: string;
+}
+
+// MARKETPLACE order: buy listed products from a registered vendor. Prices are read server-side from
+// the catalog — the body only names the products and quantities.
+export class MarketplaceItemDto {
+  @IsString() @Length(1, 64) productId!: string;
+  @IsNumber() @Min(1) @Max(50) quantity!: number;
+}
+export class CreateMarketplaceOrderDto {
+  @IsString() @Length(1, 64) vendorId!: string;
+  @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => MarketplaceItemDto) items!: MarketplaceItemDto[];
+  @IsString() @Length(16, 1024) quoteToken!: string;
+  @IsOptional() @IsString() @Length(1, 300) dropoffAddress?: string;
+  @IsOptional() @IsString() @Length(1, 120) dropoffArea?: string;
+  @IsOptional() @IsString() @Length(1, 80) customerName?: string;
+  @IsOptional() @IsString() @Length(1, 64) refundAccountId?: string;
+  @IsOptional() @IsString() @Length(1, 200) returnUrl?: string;
+}
+
+// ERRAND top-up: the rider asks the customer to add more when the shop price is higher than declared.
+export class ErrandTopUpRequestDto {
+  @IsNumber() @Min(100) @Max(100_000_000) additionalMinor!: number; // ₦1 .. ₦1,000,000
+}
+export class ErrandTopUpStartDto {
+  @IsOptional() @IsString() @Length(1, 200) returnUrl?: string;
+}
+export class ErrandTopUpConfirmDto {
+  @IsString() @Length(1, 128) transactionId!: string;
 }
 
 export class AdvanceDto {

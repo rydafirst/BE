@@ -10,6 +10,7 @@ export type Permission =
   | 'account:manage:own'
   | 'payout:request'
   | 'rider:documents:manage'
+  | 'vendor:manage:own'
   | 'admin:kyc:review'
   | 'admin:dispute:resolve'
   | 'admin:finance:read'
@@ -18,8 +19,8 @@ export type Permission =
   | 'admin:settings:manage';
 
 const MATRIX: Readonly<Record<Role, readonly Permission[]>> = {
-  CUSTOMER: ['job:create', 'job:read:own', 'wallet:read:own', 'account:manage:own'],
-  RIDER: ['job:accept', 'job:read:own', 'wallet:read:own', 'account:manage:own', 'payout:request', 'rider:documents:manage'],
+  CUSTOMER: ['job:create', 'job:read:own', 'wallet:read:own', 'account:manage:own', 'vendor:manage:own'],
+  RIDER: ['job:accept', 'job:read:own', 'wallet:read:own', 'account:manage:own', 'payout:request', 'rider:documents:manage', 'vendor:manage:own'],
   ADMIN: ['admin:kyc:review', 'admin:dispute:resolve', 'admin:finance:read', 'admin:finance:manage', 'admin:support:manage', 'admin:settings:manage'],
 };
 

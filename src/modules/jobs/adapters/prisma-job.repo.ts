@@ -42,6 +42,8 @@ export class PrismaJobRepository implements JobRepository {
       // the primary-stop delivery timestamp. Added by migration 20260722000000_job_multi_stop.
       extraStops: (job.extraStops ?? null) as PrismaWrite,
       primaryStopDeliveredAt: job.primaryStopDeliveredAt != null ? new Date(job.primaryStopDeliveredAt) : null,
+      // ERRAND: goods amount + store + captured vendor account, as JSON (migration 20260902020000).
+      errand: (job.errand ?? null) as PrismaWrite,
     };
     await this.db.job.create({ data: data as PrismaWrite });
   }
@@ -58,6 +60,7 @@ export class PrismaJobRepository implements JobRepository {
       returnReserveMinor: number | null; weightGrams: number | null; customerName: string | null;
       extraStops: import('../domain/multi-stop.js').ExtraStop[] | null;
       primaryStopDeliveredAt: Date | null;
+      errand: import('../domain/errand.js').ErrandDetails | null;
     };
     return {
       id: r.id, type: r.type, status: r.status as JobStatus, customerId: r.customerId,
@@ -89,6 +92,7 @@ export class PrismaJobRepository implements JobRepository {
       ...(x.returnReserveMinor != null ? { returnReserveMinor: x.returnReserveMinor } : {}),
       ...(x.extraStops && x.extraStops.length > 0 ? { extraStops: x.extraStops } : {}),
       ...(x.primaryStopDeliveredAt ? { primaryStopDeliveredAt: x.primaryStopDeliveredAt.getTime() } : {}),
+      ...(x.errand ? { errand: x.errand } : {}),
       createdAt: r.createdAt.toISOString(),
     };
   }
@@ -114,7 +118,11 @@ export class PrismaJobRepository implements JobRepository {
   }
 
   async findByTxRef(txRef: string): Promise<Job | null> {
-    const r = await this.db.job.findFirst({ where: { OR: [{ flwTxRef: txRef }, { waitingTxRef: txRef } as PrismaWrite] } });
+    const r = await this.db.job.findFirst({ where: { OR: [
+      { flwTxRef: txRef },
+      { waitingTxRef: txRef } as PrismaWrite,
+      { errand: { path: ['topUpTxRef'], equals: txRef } } as PrismaWrite, // errand in-app top-up
+    ] } });
     return r ? this.find(r.id) : null;
   }
   async setPaymentRefs(id: string, refs: { txRef?: string; txId?: string }): Promise<void> {
@@ -162,6 +170,12 @@ export class PrismaJobRepository implements JobRepository {
   async incrementExtraStopAttempts(id: string, index: number): Promise<void> {
     await this.mutateExtraStop(id, index, (s) => { s.attempts = (s.attempts ?? 0) + 1; });
   }
+  async setExtraStopCode(id: string, index: number, codeHash: string): Promise<void> {
+    await this.mutateExtraStop(id, index, (s) => { s.codeHash = codeHash; s.attempts = 0; });
+  }
+  async setErrand(id: string, errand: import('../domain/errand.js').ErrandDetails): Promise<void> {
+    await this.db.job.update({ where: { id }, data: { errand: errand as unknown } as PrismaWrite });
+  }
   async listPayoutPending(limit: number): Promise<Job[]> {
     const rows = await this.db.job.findMany({ where: { payoutPending: true } as PrismaWrite, take: limit, select: { id: true } });
     const out: Job[] = [];
@@ -176,6 +190,16 @@ export class PrismaJobRepository implements JobRepository {
   }
   async listByCustomer(customerId: string): Promise<Job[]> {
     const rows = await this.db.job.findMany({ where: { customerId } });
+    const out: Job[] = [];
+    for (const r of rows) { const j = await this.find(r.id); if (j) out.push(j); }
+    return out;
+  }
+
+  async listByMarketplaceVendor(vendorId: string, limit: number): Promise<Job[]> {
+    const rows = await this.db.job.findMany({
+      where: { errand: { path: ['marketplaceVendorId'], equals: vendorId } } as PrismaWrite,
+      orderBy: { createdAt: 'desc' }, take: limit, select: { id: true },
+    });
     const out: Job[] = [];
     for (const r of rows) { const j = await this.find(r.id); if (j) out.push(j); }
     return out;

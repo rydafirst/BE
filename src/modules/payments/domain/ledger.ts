@@ -6,7 +6,8 @@ export type LedgerAccount =
   | 'ESCROW'          // funds held by the custodian for a job
   | 'RIDER_PAYABLE'   // owed to the rider
   | 'CUSTOMER_REFUND' // owed back to the customer
-  | 'PLATFORM_FEE';   // platform revenue
+  | 'PLATFORM_FEE'    // platform revenue
+  | 'VENDOR_PAYABLE'; // owed to a vendor (errand/marketplace goods-money — never the rider)
 
 export type Direction = 'DEBIT' | 'CREDIT';
 

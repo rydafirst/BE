@@ -19,6 +19,9 @@ import { InMemoryRateLimiter } from '../auth/adapters/in-memory.adapters.js';
 import { RedisRateLimiter } from '../auth/adapters/redis-rate-limiter.js';
 import { AuthModule } from '../auth/auth.module.js';
 import { ProfileModule } from '../profile/profile.module.js';
+import { VendorsModule } from '../vendors/vendors.module.js';
+import { VendorsService } from '../vendors/vendors.service.js';
+import { MARKETPLACE_VENDOR_SOURCE } from './marketplace.port.js';
 import { JOB_STATUS_LOG } from './status-log.port.js';
 import { InMemoryJobStatusLog, PrismaJobStatusLog } from './adapters/status-log.adapters.js';
 import { InactivityMonitor } from './inactivity.monitor.js';
@@ -39,7 +42,7 @@ import { PrismaCallSessionRepo } from '../calls/adapters/prisma-call-session.rep
 const usePg = process.env.DB_DRIVER === 'postgres';
 
 @Module({
-  imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule, DocumentsModule, RatingsModule, SettingsModule, AuthModule, ProfileModule],
+  imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule, DocumentsModule, RatingsModule, SettingsModule, AuthModule, ProfileModule, VendorsModule],
   controllers: [JobsController, WebhooksController, CallsController, VoiceWebhookController],
   providers: [
     JobsService,
@@ -62,6 +65,8 @@ const usePg = process.env.DB_DRIVER === 'postgres';
     JobTimingsService,
     JobDiscoveryService,
     JobRatingsService,
+    // Marketplace checkout reads the vendor catalog through this port (bound to VendorsService).
+    { provide: MARKETPLACE_VENDOR_SOURCE, useExisting: VendorsService },
   ],
   exports: [JobsService],
 })
