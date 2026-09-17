@@ -72,6 +72,10 @@ export class CreateErrandDto {
   @IsOptional() @IsString() @Length(1, 80) customerName?: string;
   @IsOptional() @IsString() @Length(1, 64) refundAccountId?: string;
   @IsOptional() @IsString() @Length(1, 200) returnUrl?: string;
+  // OPTIONAL: the customer already has the shop's BUSINESS account and enters it at booking. Both must be
+  // present to be used; the server resolves + name-matches it exactly like the rider's capture.
+  @IsOptional() @IsString() @Length(3, 10) bankCode?: string;
+  @IsOptional() @IsString() @Length(6, 20) accountNumber?: string;
 }
 
 // The rider captures the vendor's BUSINESS account at the store; the server resolves the name for the

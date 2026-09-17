@@ -30,7 +30,8 @@ export interface ErrandDetails {
                                          // grow only the goods, never the fee
   shoppingList: string;
   store?: { name?: string; area?: string; address?: string };
-  vendorAccount?: ErrandVendorAccount;   // captured by the rider at the store
+  vendorAccount?: ErrandVendorAccount;   // captured by the rider at the store, or pre-entered by the customer
+  accountByCustomer?: boolean;           // true when the CUSTOMER supplied the shop account at booking
   vendorApproved?: boolean;              // the customer confirmed the resolved account before payout
   vendorPaidAt?: number;                 // epoch ms the vendor payout was released
   vendorPayoutRef?: string;              // provider ref once the vendor transfer succeeds

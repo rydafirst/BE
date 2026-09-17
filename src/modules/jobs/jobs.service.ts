@@ -3,6 +3,7 @@ import {
   Optional, UnauthorizedException,
 } from '@nestjs/common';
 import { MARKETPLACE_VENDOR_SOURCE, type MarketplaceVendorSource } from './marketplace.port.js';
+import { ReliabilityService } from '../reliability/reliability.service.js';
 import { randomUUID } from 'node:crypto';
 import { ENV } from '../../config/config.module.js';
 import type { Env } from '../../config/env.validation.js';
@@ -60,6 +61,13 @@ export type CreatedJob = Job & { paymentLink: string; extraStopCodes?: string[] 
 // The rider job board moved to JobDiscoveryService; re-exported so existing imports keep working.
 export type { AvailableJob } from './job-discovery.service.js';
 
+// ERRAND: statuses BEFORE the rider has reached the shop (the errand's pickup). The vendor-account
+// capture and the payout are only allowed once the rider has arrived — `arriveAtPickup` sets AT_PICKUP
+// after a GPS geofence check, so "reached the shop" is a server-verified fact, not a client claim.
+const PRE_ARRIVAL_STATUSES: readonly JobStatus[] = ['CREATED', 'FUNDED', 'SEARCHING', 'ACCEPTED', 'EN_ROUTE_PICKUP'];
+function hasReachedStore(status: JobStatus): boolean {
+  return !PRE_ARRIVAL_STATUSES.includes(status);
+}
 
 @Injectable()
 export class JobsService {
@@ -89,6 +97,9 @@ export class JobsService {
     // Marketplace catalog read-port (bound to VendorsService in the module). Optional so the many
     // tests/scripts that construct JobsService positionally keep working — only the checkout path needs it.
     @Optional() @Inject(MARKETPLACE_VENDOR_SOURCE) private readonly vendorSource?: MarketplaceVendorSource,
+    // Rider reliability (lateness strikes/suspension + report handling). Optional so positional test
+    // constructions keep working; when present it gates accept() on suspension and handles late reports.
+    @Optional() private readonly reliability?: ReliabilityService,
   ) {}
 
   /**
@@ -349,6 +360,20 @@ export class JobsService {
       }
     }
 
+    // OPTIONAL customer-supplied shop account: if the customer already has the shop's account (e.g. they
+    // called the shop), they can enter it at booking. We resolve the real name and name-match it against
+    // the store the SAME way the rider's capture does — a fake number can't slip through. It is still only
+    // paid out after the rider has reached the shop and the customer approves (see approve/capture gates).
+    let customerAccount: ErrandDetails['vendorAccount'] | undefined;
+    let accountByCustomer = false;
+    if (dto.bankCode && dto.accountNumber) {
+      let accountName: string;
+      try { ({ accountName } = await this.escrow.resolveAccount(dto.bankCode, dto.accountNumber)); }
+      catch { throw new BadRequestException('Could not verify that shop account — check the bank and number'); }
+      customerAccount = { bankCode: dto.bankCode, accountNumber: dto.accountNumber, accountName };
+      accountByCustomer = true;
+    }
+
     const errand: ErrandDetails = {
       goodsMinor,
       deliveryFeeMinor: fare.totalMinor, // fixed — top-ups grow only the goods, never the rider's fee
@@ -356,6 +381,7 @@ export class JobsService {
       ...(dto.storeName || dto.storeArea || dto.storeAddress
         ? { store: { ...(dto.storeName ? { name: dto.storeName } : {}), ...(dto.storeArea ? { area: dto.storeArea } : {}), ...(dto.storeAddress ? { address: dto.storeAddress } : {}) } }
         : {}),
+      ...(customerAccount ? { vendorAccount: customerAccount, accountByCustomer, vendorApproved: false } : {}),
     };
     const job: Job = {
       id: randomUUID(), type: 'ERRAND', status: 'CREATED', customerId,
@@ -471,6 +497,13 @@ export class JobsService {
   async captureVendorAccount(riderId: string, jobId: string, bankCode: string, accountNumber: string): Promise<{ accountName: string; match: boolean }> {
     const job = await this.assertAssigned(jobId, riderId);
     if (job.type !== 'ERRAND' || !job.errand) throw new ConflictException('This delivery is not an errand');
+    // The customer may have supplied the shop account at booking — the rider must not overwrite it.
+    if (job.errand.accountByCustomer && job.errand.vendorAccount) {
+      throw new ConflictException('The customer already provided the shop account for this order');
+    }
+    // GEOFENCE GATE: the account form only opens once the rider has actually reached the shop — the
+    // system checks arrival (AT_PICKUP is set by the geofenced arriveAtPickup) before any account is taken.
+    if (!hasReachedStore(job.status)) throw new ConflictException('Get to the shop first — the account form opens when you arrive.');
     const { accountName } = await this.escrow.resolveAccount(bankCode, accountNumber);
     const match = job.errand.store?.name ? namesMatch(job.errand.store.name, accountName) : false;
     await this.jobs.setErrand(jobId, { ...job.errand, vendorAccount: { bankCode, accountNumber, accountName }, vendorApproved: false });
@@ -487,8 +520,16 @@ export class JobsService {
     if (job.customerId !== customerId) throw new ForbiddenException();
     if (job.type !== 'ERRAND' || !job.errand) throw new ConflictException('This delivery is not an errand');
     const errand = job.errand;
-    if (!errand.vendorAccount) throw new ConflictException('The rider has not entered the vendor account yet');
+    if (!errand.vendorAccount) throw new ConflictException('The shop account has not been added yet');
     if (errand.vendorPaidAt) return { paidPending: false }; // already paid (idempotent)
+    // Marketplace orders are paid to the shop automatically on delivery — never via a manual approve.
+    if (errand.autoVendorPayout) throw new ConflictException('This order is paid to the shop automatically on delivery.');
+    // GEOFENCE GATE: never release the goods-money before the rider has reached the shop — this holds
+    // even when the customer pre-entered the account, so nobody can pay the vendor while the rider is
+    // still on the way.
+    if (!hasReachedStore(job.status)) {
+      throw new ConflictException('Your rider needs to reach the shop before the payment can be released.');
+    }
 
     await this.jobs.setErrand(jobId, { ...errand, vendorApproved: true });
     const res = await this.escrow.settleVendorPayout({
@@ -527,6 +568,32 @@ export class JobsService {
         ...(j.errand?.vendorPaidAt ? { vendorPaidAt: j.errand.vendorPaidAt } : {}),
         ...(j.errand?.vendorPayoutRef ? { vendorPayoutRef: j.errand.vendorPayoutRef } : {}),
       }));
+  }
+
+  /**
+   * The customer reports that a delivery was late. We gather the trip's timings server-side (actual
+   * pickup→completion vs. our ETA + the trip's delivery fee) and hand them to ReliabilityService, which
+   * checks them against a traffic-aware ETA and decides: dismiss (traffic explains it), strike (clearly
+   * late), or queue for an admin (uncertain). Owner-only; never trusts client-supplied times.
+   */
+  async reportLateDelivery(customerId: string, jobId: string): Promise<{ reportId: string; verdict: string; status: string }> {
+    if (!this.reliability) throw new BadRequestException('Reporting is unavailable');
+    const job = await this.mustFind(jobId);
+    if (job.customerId !== customerId) throw new ForbiddenException();
+    if (!job.riderId) throw new ConflictException('No rider was assigned to this delivery');
+    const events = await this.statusLog.list(jobId);
+    const pickup = pickedUpAt(events);
+    if (pickup === undefined) throw new ConflictException('This delivery has not started yet');
+    const completedAt = events.filter((e) => e.status === 'COMPLETED' || e.status === 'RELEASED').map((e) => e.at).sort((a, b) => b - a)[0] ?? Date.now();
+    const actualSec = Math.max(0, (completedAt - pickup) / 1000);
+    const staticEtaSec = expectedDropSeconds(job.pickup, job.dropoff);
+    const deliveryFeeMinor = job.type === 'ERRAND' && job.errand
+      ? (job.errand.deliveryFeeMinor ?? Math.max(0, job.amountMinor - job.errand.goodsMinor))
+      : job.amountMinor;
+    return this.reliability.reportLate({
+      jobId, riderId: job.riderId, reporterId: customerId,
+      actualSec, staticEtaSec, pickup: job.pickup, dropoff: job.dropoff, deliveryFeeMinor,
+    });
   }
 
   /**
@@ -703,6 +770,8 @@ export class JobsService {
   }
 
   async accept(riderId: string, jobId: string): Promise<Job> {
+    // Reliability: a rider serving a lateness suspension cannot take jobs until it lifts.
+    if (this.reliability) await this.reliability.assertNotSuspended(riderId);
     // Fail-closed: an uncleared rider can't take a job even by calling this endpoint directly
     // (the go-online gate isn't the only enforcement point). Toggle via admin settings.
     if ((await this.settings.enforceRiderClearance()) && !(await this.documents.isRiderCleared(riderId))) {

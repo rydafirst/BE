@@ -472,3 +472,42 @@ model Product {
   createdAt   DateTime @default(now())
   @@index([vendorId])
 }
+
+// Rider reliability: a strike is a recorded late delivery (auto or admin-upheld). Strikes roll off after
+// a window; hitting the threshold within it triggers a temporary suspension (see RiderReliability).
+model RiderStrike {
+  id        String   @id @default(uuid())
+  riderId   String
+  jobId     String
+  reason    String?
+  createdAt DateTime @default(now())
+  @@index([riderId])
+}
+
+// A customer's late-delivery report + its verdict. Auto-judged against a traffic-aware ETA; UNCERTAIN
+// cases sit PENDING for an admin. `forfeitMinor` is the recorded 10% intent (money only moves in Phase 2).
+model LateReport {
+  id              String    @id @default(uuid())
+  jobId           String
+  riderId         String
+  reporterId      String
+  status          String    // PENDING | UPHELD | WAIVED | DISMISSED
+  verdict         String    // ON_TIME | LATE | UNCERTAIN
+  actualSec       Int
+  staticEtaSec    Int
+  trafficAwareSec Int?
+  deliveryFeeMinor Int
+  forfeitMinor    Int?
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  @@index([status])
+  @@index([riderId])
+}
+
+// One row per rider that has ever been suspended: the current suspension end-time (null once lifted/expired).
+model RiderReliability {
+  riderId        String    @id
+  suspendedUntil DateTime?
+  updatedAt      DateTime  @updatedAt
+}

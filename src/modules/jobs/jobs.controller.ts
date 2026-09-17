@@ -90,6 +90,13 @@ export class JobsController {
     return this.jobs.approveVendorAccount(user.id, id);
   }
 
+  /** Customer reports a late delivery — auto-judged against a traffic-aware ETA (see ReliabilityService). */
+  @Post(':id/report-late')
+  @RequirePermission('job:read:own')
+  reportLate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.jobs.reportLateDelivery(user.id, id);
+  }
+
   /** Receipt proving the shop was paid — shown to the vendor, kept by the customer (either party). */
   @Get(':id/errand/receipt')
   @RequirePermission('job:read:own')

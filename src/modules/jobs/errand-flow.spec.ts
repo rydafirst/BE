@@ -100,6 +100,11 @@ test('VENDOR PAYOUT: rider captures the account, customer approves, goods go to 
   const created = await bookErrand(svc, 'cust-e2', GOODS);
   await svc.accept(RIDER_ID, created.id);
 
+  // The account form is gated on arrival: the rider can't capture until they've reached the shop.
+  await assert.rejects(svc.captureVendorAccount(RIDER_ID, created.id, VENDOR.bankCode, VENDOR.accountNumber), /reach|arrive|shop/i);
+  await svc.advance(RIDER_ID, created.id, 'EN_ROUTE_PICKUP');
+  await svc.arriveAtPickup(RIDER_ID, created.id, PICKUP, 0);
+
   const cap = await svc.captureVendorAccount(RIDER_ID, created.id, VENDOR.bankCode, VENDOR.accountNumber);
   assert.equal(cap.accountName, 'SOLASHINE VENTURES LTD');
   assert.equal(cap.match, true, 'name enquiry matches the store name "Sola Store"');
@@ -124,12 +129,13 @@ test('COMPLETION: the rider earns ONLY the delivery fee; the whole escrow conser
   const fare = computeFare('ERRAND', routeDistanceMeters([PICKUP, DROPOFF]));
   const created = await bookErrand(svc, 'cust-e3', GOODS);
   await svc.accept(RIDER_ID, created.id);
+  // Arrive at the shop first (the account/payout are gated on arrival), then capture + approve.
+  await svc.advance(RIDER_ID, created.id, 'EN_ROUTE_PICKUP');
+  await svc.arriveAtPickup(RIDER_ID, created.id, PICKUP, 0);
   await svc.captureVendorAccount(RIDER_ID, created.id, VENDOR.bankCode, VENDOR.accountNumber);
   await svc.approveVendorAccount('cust-e3', created.id);
 
   // Drive the trip to the customer and complete.
-  await svc.advance(RIDER_ID, created.id, 'EN_ROUTE_PICKUP');
-  await svc.arriveAtPickup(RIDER_ID, created.id, PICKUP, 0);
   await svc.advance(RIDER_ID, created.id, 'IN_PROGRESS');
   await svc.advance(RIDER_ID, created.id, 'EN_ROUTE_DROP');
   await svc.markArrived(RIDER_ID, created.id, DROPOFF, 0);
@@ -154,6 +160,9 @@ test('TOP-UP: extra money grows the goods (paid to the vendor); the rider fee ne
   const fare = computeFare('ERRAND', routeDistanceMeters([PICKUP, DROPOFF]));
   const created = await bookErrand(svc, 'cust-e4', GOODS);
   await svc.accept(RIDER_ID, created.id);
+  // Rider rides to the shop and arrives (the account/payout are gated on arrival).
+  await svc.advance(RIDER_ID, created.id, 'EN_ROUTE_PICKUP');
+  await svc.arriveAtPickup(RIDER_ID, created.id, PICKUP, 0);
 
   // Rider at the store: the price is higher, so ask the customer to add ₦2,000.
   const req = await svc.requestErrandTopUp(RIDER_ID, created.id, TOPUP);
@@ -180,8 +189,6 @@ test('TOP-UP: extra money grows the goods (paid to the vendor); the rider fee ne
   const vendorTransfer = provider.transfers.find((t) => t.accountNumber === VENDOR.accountNumber);
   assert.ok(vendorTransfer && vendorTransfer.amountMinor === GOODS + TOPUP, 'vendor received declared + top-up');
 
-  await svc.advance(RIDER_ID, created.id, 'EN_ROUTE_PICKUP');
-  await svc.arriveAtPickup(RIDER_ID, created.id, PICKUP, 0);
   await svc.advance(RIDER_ID, created.id, 'IN_PROGRESS');
   await svc.advance(RIDER_ID, created.id, 'EN_ROUTE_DROP');
   await svc.markArrived(RIDER_ID, created.id, DROPOFF, 0);
@@ -195,4 +202,42 @@ test('TOP-UP: extra money grows the goods (paid to the vendor); the rider fee ne
     deriveBalance(ledger.entries, 'VENDOR_PAYABLE').amount + riderNet + fare.platformFeeMinor,
     created.amountMinor + TOPUP,
   );
+});
+
+async function bookErrandWithAccount(svc: JobsService, customer: string) {
+  const quote = svc.quote({ type: 'ERRAND', pickup: PICKUP, dropoff: DROPOFF });
+  const created = await svc.createErrand(customer, {
+    quoteToken: quote.quoteToken, goodsMinor: GOODS, shoppingList: 'Bread and milk', storeName: 'Sola Store',
+    bankCode: VENDOR.bankCode, accountNumber: VENDOR.accountNumber,
+  } as never);
+  await svc.confirmFundedByTxRef({ status: 'successful', amountMinor: created.amountMinor, currency: 'NGN', txRef: created.flwTxRef!, transactionId: `txn-${customer}` });
+  return created;
+}
+
+test('CUSTOMER can pre-enter the shop account at booking (name-matched); the rider cannot overwrite it', async () => {
+  const { svc, repo, provider } = build();
+  const created = await bookErrandWithAccount(svc, 'cust-e5');
+  const stored = (await repo.find(created.id))!;
+  assert.equal(stored.errand?.accountByCustomer, true);
+  assert.equal(stored.errand?.vendorAccount?.accountName, 'SOLASHINE VENTURES LTD');
+
+  await svc.accept(RIDER_ID, created.id);
+  await svc.advance(RIDER_ID, created.id, 'EN_ROUTE_PICKUP');
+  await svc.arriveAtPickup(RIDER_ID, created.id, PICKUP, 0);
+  // The rider must not be able to swap the customer-vetted account.
+  await assert.rejects(svc.captureVendorAccount(RIDER_ID, created.id, VENDOR.bankCode, VENDOR.accountNumber), /already provided/i);
+
+  await svc.approveVendorAccount('cust-e5', created.id);
+  assert.ok(provider.transfers.some((t) => t.accountNumber === VENDOR.accountNumber && t.amountMinor === GOODS), 'paid the customer-entered shop account');
+});
+
+test('payout is gated on the rider reaching the shop — even with a pre-entered account', async () => {
+  const { svc } = build();
+  const created = await bookErrandWithAccount(svc, 'cust-e6');
+  await svc.accept(RIDER_ID, created.id);
+  // Not at the shop yet → releasing the goods-money is refused.
+  await assert.rejects(svc.approveVendorAccount('cust-e6', created.id), /reach|shop/i);
+  await svc.advance(RIDER_ID, created.id, 'EN_ROUTE_PICKUP');
+  await svc.arriveAtPickup(RIDER_ID, created.id, PICKUP, 0);
+  await svc.approveVendorAccount('cust-e6', created.id); // now allowed
 });

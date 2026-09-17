@@ -71,6 +71,10 @@ export const envSchema = z.object({
   // (server-enforced on every vendor/checkout endpoint, not just hidden in the UI) until it is turned
   // on from admin. Kept off until the fund-flow has legal sign-off; an admin flips it on when cleared.
   MARKETPLACE_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  // Rider lateness MONEY penalty (10% of the delivery fee on an upheld late trip). OFF by default and
+  // separately from the strike/suspension system, which is always active. Turn on only once strike
+  // accuracy has been watched in the wild — an admin flips it. Strikes/suspension never wait on this.
+  LATE_MONEY_PENALTY_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // Where document images live: 'memory' (dev) or 'r2' (Cloudflare R2 / S3-compatible, prod).
   DOCUMENT_STORE_DRIVER: z.enum(['memory', 'r2']).default('memory'),
   R2_ACCOUNT_ID: z.string().default(''),

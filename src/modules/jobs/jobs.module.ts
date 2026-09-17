@@ -22,6 +22,7 @@ import { ProfileModule } from '../profile/profile.module.js';
 import { VendorsModule } from '../vendors/vendors.module.js';
 import { VendorsService } from '../vendors/vendors.service.js';
 import { MARKETPLACE_VENDOR_SOURCE } from './marketplace.port.js';
+import { ReliabilityModule } from '../reliability/reliability.module.js';
 import { JOB_STATUS_LOG } from './status-log.port.js';
 import { InMemoryJobStatusLog, PrismaJobStatusLog } from './adapters/status-log.adapters.js';
 import { InactivityMonitor } from './inactivity.monitor.js';
@@ -42,7 +43,7 @@ import { PrismaCallSessionRepo } from '../calls/adapters/prisma-call-session.rep
 const usePg = process.env.DB_DRIVER === 'postgres';
 
 @Module({
-  imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule, DocumentsModule, RatingsModule, SettingsModule, AuthModule, ProfileModule, VendorsModule],
+  imports: [PaymentsModule, AccountsModule, NotificationsModule, PresenceModule, DocumentsModule, RatingsModule, SettingsModule, AuthModule, ProfileModule, VendorsModule, ReliabilityModule],
   controllers: [JobsController, WebhooksController, CallsController, VoiceWebhookController],
   providers: [
     JobsService,

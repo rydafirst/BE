@@ -47,9 +47,16 @@ export class JobDiscoveryService {
       const tripMeters = haversineMeters(j.pickup, j.dropoff);
       // Distance/ETA from the rider to the pickup — the "X min away" a rider decides on.
       const toPickup = riderPos ? haversineMeters(riderPos, j.pickup) : undefined;
+      // What the rider actually earns. For a plain delivery that's the whole charge minus the platform
+      // fee. For an ERRAND the charge also contains the customer's ITEM money (paid to the vendor, never
+      // the rider), so the rider earns only the DELIVERY fee (net of the platform fee) — otherwise the
+      // board would show the goods money as rider earnings and hugely overstate the payout.
+      const grossFareMinor = j.type === 'ERRAND' && j.errand
+        ? (j.errand.deliveryFeeMinor ?? Math.max(0, j.amountMinor - j.errand.goodsMinor))
+        : j.amountMinor;
       return {
         id: j.id, type: j.type, amountMinor: j.amountMinor, currency: j.currency, createdAt: j.createdAt,
-        riderPayoutMinor: Math.max(0, j.amountMinor - (j.platformFeeMinor ?? 0)),
+        riderPayoutMinor: Math.max(0, grossFareMinor - (j.platformFeeMinor ?? 0)),
         pickupArea: j.pickupArea || coarseArea(j.pickupAddress),
         dropoffArea: j.dropoffArea || coarseArea(j.dropoffAddress),
         pickupApprox: approximatePoint(j.pickup),

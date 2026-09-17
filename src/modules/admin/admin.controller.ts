@@ -13,6 +13,7 @@ class SettingsDto {
   @IsOptional() @IsBoolean() requireGuarantor?: boolean;
   @IsOptional() @IsBoolean() enforceRiderClearance?: boolean;
   @IsOptional() @IsBoolean() marketplaceEnabled?: boolean;
+  @IsOptional() @IsBoolean() lateMoneyPenaltyEnabled?: boolean;
   @IsOptional() @IsIn(['LAGOS', 'ABUJA', 'PORT_HARCOURT', 'OTHER']) launchCity?: LaunchCity;
 }
 
