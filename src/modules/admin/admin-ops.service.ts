@@ -67,4 +67,9 @@ export class AdminOpsService {
   resendPayout(jobId: string): Promise<{ outcome: string; providerStatus: string; amountMinor?: number }> {
     return this.jobs.resendFailedPayout(jobId);
   }
+
+  /** Force-void a stuck/non-functioning delivery so it stops showing as live (refunds if funded). */
+  voidJob(jobId: string): Promise<{ status: string; refunded: boolean }> {
+    return this.jobs.adminVoidJob(jobId);
+  }
 }

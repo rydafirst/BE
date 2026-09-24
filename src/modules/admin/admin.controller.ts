@@ -55,6 +55,13 @@ export class AdminController {
     return this.ops.finance();
   }
 
+  // Force-void a stuck / non-functioning delivery so it stops showing as live. Refunds if funded.
+  @Post('ops/deliveries/:jobId/void')
+  @RequirePermission('admin:finance:manage')
+  voidDelivery(@Param('jobId') jobId: string) {
+    return this.ops.voidJob(jobId);
+  }
+
   @Get('finance/payouts/pending')
   @RequirePermission('admin:finance:read')
   pendingPayouts() {

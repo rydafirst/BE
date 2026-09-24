@@ -1431,6 +1431,42 @@ export class JobsService {
     return { status: 'CANCELLED', refunded: policy.refundFull };
   }
 
+  /**
+   * ADMIN force-void: cancel a stuck / non-functioning delivery from ANY non-terminal state so it stops
+   * showing as live (and drops out of the rider's available feed). Refunds the customer in full when the
+   * escrow was funded. Already-settled jobs (completed/released/dispute-resolved) are refused; an
+   * already-cancelled job is a no-op (idempotent). Unlike the customer cancel, there is no owner check
+   * and no pre-pickup-only policy — this is the operator's clean-up tool.
+   */
+  async adminVoidJob(jobId: string): Promise<{ status: JobStatus; refunded: boolean }> {
+    const job = await this.mustFind(jobId);
+    const TERMINAL: JobStatus[] = ['COMPLETED', 'RELEASED', 'DISPUTE_RESOLVED'];
+    if (TERMINAL.includes(job.status)) {
+      throw new ConflictException('This delivery is already completed or settled and cannot be voided.');
+    }
+    if (job.status === 'CANCELLED') return { status: 'CANCELLED', refunded: false };
+    // Funded/active states hold customer money in escrow — void must refund those in full.
+    const FUNDED_ACTIVE: JobStatus[] = ['FUNDED', 'SEARCHING', 'ACCEPTED', 'EN_ROUTE_PICKUP', 'AT_PICKUP', 'IN_PROGRESS', 'EN_ROUTE_DROP', 'ARRIVED', 'AWAITING_CODE', 'EN_ROUTE_STOP', 'WAITING', 'AWAITING_RESOLUTION'];
+    const refund = FUNDED_ACTIVE.includes(job.status);
+    await this.transitionTo(jobId, 'CANCELLED');
+    if (refund) {
+      void this.escrow.settle({
+        jobId, status: 'CANCELLED', outcome: 'REFUND_FULL', collected: Money.of(job.amountMinor),
+        ...(job.flwTxId ? { transactionId: job.flwTxId } : {}),
+        onPayoutSettled: this.recordPayoutState(jobId),
+      }).catch((e) => this.log.error(`admin void refund settle failed for ${jobId} — will need retryPayout: ${(e as Error).message}`));
+    }
+    await this.notify.record(job.customerId, {
+      title: 'Order cancelled',
+      body: refund ? 'Your order was cancelled by support and refunded in full.' : 'Your order was cancelled by support.',
+      jobId, urgent: true,
+    });
+    if (job.riderId) {
+      await this.notify.record(job.riderId, { title: 'Order cancelled', body: 'A delivery was cancelled by support.', jobId, urgent: true });
+    }
+    return { status: 'CANCELLED', refunded: refund };
+  }
+
   async openDispute(actorId: string, jobId: string): Promise<{ status: JobStatus }> {
     const job = await this.mustFind(jobId);
     if (job.customerId !== actorId && job.riderId !== actorId) throw new ForbiddenException();
