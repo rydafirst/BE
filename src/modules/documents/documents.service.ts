@@ -166,11 +166,15 @@ export class DocumentsService {
 
   // ---- Admin / reviewer ----
 
-  /** The reviewer queue: every onboarding rider with their track + status, neediest first. */
-  async reviewQueue(): Promise<Array<{ riderId: string; track: VehicleTrack | null; status: QueueStatus; oldestPendingAt: number }>> {
+  /** The reviewer queue: every onboarding rider with their name + track + status, neediest first.
+   *  The name (from the rider's profile) lets the admin list read as people, not raw IDs. */
+  async reviewQueue(): Promise<Array<{ riderId: string; name: string | null; nameVerified: boolean; track: VehicleTrack | null; status: QueueStatus; oldestPendingAt: number }>> {
     const now = Date.now();
     const ids = await this.repo.listRiderIds();
-    const entries = await Promise.all(ids.map(async (riderId) => ({ riderId, ...(await this.onboardingFor(riderId, now)) })));
+    const entries = await Promise.all(ids.map(async (riderId) => {
+      const [onboarding, profile] = await Promise.all([this.onboardingFor(riderId, now), this.repo.getProfile(riderId)]);
+      return { riderId, name: profile?.legalName ?? null, nameVerified: profile?.nameVerified ?? false, ...onboarding };
+    }));
     return sortReviewQueue(entries);
   }
 
