@@ -7,7 +7,7 @@ import {
 import { sortReviewQueue, type QueueStatus } from './domain/review-queue.js';
 import { isValidLegalName, isValidPlate, isValidVehicleColor, normalizePlate } from './domain/rider-profile.js';
 import {
-  DOCUMENT_REPO, DOCUMENT_STORE, type DocumentRecord, type DocumentRepo, type DocumentStore, type RiderProfile,
+  DOCUMENT_REPO, DOCUMENT_STORE, type DocumentRecord, type DocumentRepo, type DocumentStore, type GuarantorPatch, type RiderProfile,
 } from './ports.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { SettingsService } from '../settings/settings.service.js';
@@ -238,12 +238,12 @@ export class DocumentsService {
     return this.repo.getProfile(riderId);
   }
 
-  /** Rider sets their legal name / plate / colour. Changing the name resets verification. */
+  /** Rider sets their legal name / plate / colour / guarantor details. Changing the name resets verification. */
   async updateRiderProfile(
     riderId: string,
-    input: { legalName?: string; vehiclePlate?: string; vehicleColor?: string },
+    input: { legalName?: string; vehiclePlate?: string; vehicleColor?: string; guarantorName?: string; guarantorPhone?: string; guarantorAddress?: string; guarantorRelationship?: string },
   ): Promise<RiderProfile> {
-    const patch: { legalName?: string; vehiclePlate?: string; vehicleColor?: string } = {};
+    const patch: GuarantorPatch & { legalName?: string; vehiclePlate?: string; vehicleColor?: string } = {};
     if (input.legalName !== undefined) {
       if (!isValidLegalName(input.legalName)) throw new BadRequestException('Enter your name exactly as it appears on your ID');
       patch.legalName = input.legalName.trim();
@@ -256,6 +256,11 @@ export class DocumentsService {
       if (!isValidVehicleColor(input.vehicleColor)) throw new BadRequestException('Choose a valid vehicle colour');
       patch.vehicleColor = input.vehicleColor;
     }
+    // Guarantor details are free text (name/phone/address/relationship) — trimmed, length-bounded by the DTO.
+    if (input.guarantorName !== undefined) patch.guarantorName = input.guarantorName.trim();
+    if (input.guarantorPhone !== undefined) patch.guarantorPhone = input.guarantorPhone.trim();
+    if (input.guarantorAddress !== undefined) patch.guarantorAddress = input.guarantorAddress.trim();
+    if (input.guarantorRelationship !== undefined) patch.guarantorRelationship = input.guarantorRelationship.trim();
     await this.repo.setProfile(riderId, patch);
     return this.repo.getProfile(riderId);
   }

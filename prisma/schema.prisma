@@ -358,11 +358,16 @@ model AuditLog {
 // A rider's onboarding aggregate: chosen vehicle track + the identity/vehicle details customers see.
 model RiderOnboarding {
   riderId      String   @id
-  track        String?  // BIKE | CAR | KEKE (chosen first in the flow)
+  track        String?  // BIKE | CAR | KEKE | BICYCLE (chosen first in the flow)
   legalName    String?  // government-registered name (verified against the Gov ID by an admin)
   nameVerified Boolean  @default(false)
   vehiclePlate String?
   vehicleColor String?  // fixed palette (see rider-profile.ts)
+  // Guarantor (structured details; the signed-note photo is the GUARANTOR document upload).
+  guarantorName         String?
+  guarantorPhone        String?
+  guarantorAddress      String?
+  guarantorRelationship String?
   updatedAt    DateTime @updatedAt
 }
 

@@ -84,23 +84,35 @@ export class PrismaDocumentRepo implements DocumentRepo {
   async getProfile(riderId: string): Promise<RiderProfile> {
     const r = await this.db.riderOnboarding.findUnique({ where: { riderId } });
     if (!r) return { track: null, nameVerified: false };
+    // guarantor* columns are added by migration 20260924000000; the generated client may lag, so read
+    // them through a loose cast (same pattern used for other newly-added columns in this codebase).
+    const g = r as unknown as { guarantorName?: string | null; guarantorPhone?: string | null; guarantorAddress?: string | null; guarantorRelationship?: string | null };
     return {
       track: r.track ? (r.track as VehicleTrack) : null,
       nameVerified: r.nameVerified,
       ...(r.legalName ? { legalName: r.legalName } : {}),
       ...(r.vehiclePlate ? { vehiclePlate: r.vehiclePlate } : {}),
       ...(r.vehicleColor ? { vehicleColor: r.vehicleColor } : {}),
+      ...(g.guarantorName ? { guarantorName: g.guarantorName } : {}),
+      ...(g.guarantorPhone ? { guarantorPhone: g.guarantorPhone } : {}),
+      ...(g.guarantorAddress ? { guarantorAddress: g.guarantorAddress } : {}),
+      ...(g.guarantorRelationship ? { guarantorRelationship: g.guarantorRelationship } : {}),
     };
   }
 
-  async setProfile(riderId: string, patch: { legalName?: string; vehiclePlate?: string; vehicleColor?: string }): Promise<void> {
+  async setProfile(riderId: string, patch: { legalName?: string; vehiclePlate?: string; vehicleColor?: string; guarantorName?: string; guarantorPhone?: string; guarantorAddress?: string; guarantorRelationship?: string }): Promise<void> {
     // Changing the legal name resets verification (an admin must re-check it against the Gov ID).
     const data = {
       ...(patch.legalName !== undefined ? { legalName: patch.legalName, nameVerified: false } : {}),
       ...(patch.vehiclePlate !== undefined ? { vehiclePlate: patch.vehiclePlate } : {}),
       ...(patch.vehicleColor !== undefined ? { vehicleColor: patch.vehicleColor } : {}),
+      ...(patch.guarantorName !== undefined ? { guarantorName: patch.guarantorName } : {}),
+      ...(patch.guarantorPhone !== undefined ? { guarantorPhone: patch.guarantorPhone } : {}),
+      ...(patch.guarantorAddress !== undefined ? { guarantorAddress: patch.guarantorAddress } : {}),
+      ...(patch.guarantorRelationship !== undefined ? { guarantorRelationship: patch.guarantorRelationship } : {}),
     };
-    await this.db.riderOnboarding.upsert({ where: { riderId }, create: { riderId, ...data }, update: data });
+    // Cast: the guarantor* keys aren't in the lagging generated type yet (see migration above).
+    await this.db.riderOnboarding.upsert({ where: { riderId }, create: { riderId, ...data } as never, update: data as never });
   }
 
   async setNameVerified(riderId: string, verified: boolean): Promise<void> {

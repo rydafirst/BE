@@ -27,6 +27,20 @@ test('keke track pulls in the tricycle permit', () => {
   assert.ok(requiredDocuments('KEKE', LAGOS).includes('KEKE_PERMIT'));
 });
 
+test('bicycle track asks for identity docs only — no licence, vehicle or permit documents', () => {
+  const req = requiredDocuments('BICYCLE', LAGOS);
+  // Only the identity/onboarding basics a non-registered pedal-bike rider can actually provide.
+  assert.deepEqual([...req].sort(), ['ADDRESS_PROOF', 'GOV_ID', 'PROFILE_PHOTO'].sort());
+  for (const t of ['LICENSE', 'VEHICLE_REG', 'PROOF_OF_OWNERSHIP', 'ROADWORTHINESS', 'INSURANCE', 'VEHICLE_PHOTO', 'LASRRA', 'LASDRI', 'HACKNEY_PERMIT', 'KEKE_PERMIT'] as DocumentType[]) {
+    assert.ok(!req.includes(t), `bicycle should NOT require ${t}`);
+  }
+});
+
+test('bicycle still picks up the guarantor when the flag is on', () => {
+  assert.ok(!requiredDocuments('BICYCLE', LAGOS).includes('GUARANTOR'));
+  assert.ok(requiredDocuments('BICYCLE', { city: 'LAGOS', requireGuarantor: true }).includes('GUARANTOR'));
+});
+
 test('non-Lagos city drops the Lagos-only permits', () => {
   const req = requiredDocuments('CAR', { city: 'ABUJA', requireGuarantor: false });
   assert.ok(!req.includes('LASRRA'));

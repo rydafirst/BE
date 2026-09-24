@@ -2,8 +2,12 @@
 // decides which are required for a given vehicle track + city, and the overall onboarding status.
 // Modelled on Uber/Bolt Nigeria (see docs/12-driver-onboarding-kyc.md).
 
-export type VehicleTrack = 'BIKE' | 'CAR' | 'KEKE';
+export type VehicleTrack = 'BIKE' | 'CAR' | 'KEKE' | 'BICYCLE';
 export type City = 'LAGOS' | 'ABUJA' | 'PORT_HARCOURT' | 'OTHER';
+
+// The motorised tracks. A BICYCLE is not government-registered, so the vehicle/licence/permit
+// documents below apply only to these — a bicycle rider is never asked for them.
+const MOTOR: readonly VehicleTrack[] = ['BIKE', 'CAR', 'KEKE'];
 
 export type DocumentType =
   | 'PROFILE_PHOTO'
@@ -34,16 +38,16 @@ export interface DocumentSpec {
 export const DOCUMENT_SPECS: readonly DocumentSpec[] = [
   { type: 'PROFILE_PHOTO',     label: 'Profile photo',            tracks: 'ALL', expires: false },
   { type: 'GOV_ID',            label: 'Government ID (NIN/Passport)', tracks: 'ALL', expires: false },
-  { type: 'LICENSE',           label: "Driver's/Rider's licence",  tracks: 'ALL', expires: true },
+  { type: 'LICENSE',           label: "Driver's/Rider's licence",  tracks: MOTOR, expires: true },
   { type: 'ADDRESS_PROOF',     label: 'Proof of address',          tracks: 'ALL', expires: false },
-  { type: 'VEHICLE_REG',       label: 'Vehicle registration',      tracks: 'ALL', expires: true },
-  { type: 'PROOF_OF_OWNERSHIP',label: 'Proof of ownership',        tracks: 'ALL', expires: false },
-  { type: 'ROADWORTHINESS',    label: 'Roadworthiness certificate',tracks: 'ALL', expires: true },
-  { type: 'INSURANCE',         label: 'Insurance certificate',     tracks: 'ALL', expires: true },
-  { type: 'VEHICLE_PHOTO',     label: 'Vehicle photo (plate visible)', tracks: 'ALL', expires: false },
-  { type: 'GUARANTOR',         label: 'Guarantor form',            tracks: 'ALL', requiresFlag: 'guarantor', expires: false },
-  // Lagos-conditional layer:
-  { type: 'LASRRA',            label: 'LASRRA card',               tracks: 'ALL',        cities: ['LAGOS'], expires: true },
+  { type: 'VEHICLE_REG',       label: 'Vehicle registration',      tracks: MOTOR, expires: true },
+  { type: 'PROOF_OF_OWNERSHIP',label: 'Proof of ownership',        tracks: MOTOR, expires: false },
+  { type: 'ROADWORTHINESS',    label: 'Roadworthiness certificate',tracks: MOTOR, expires: true },
+  { type: 'INSURANCE',         label: 'Insurance certificate',     tracks: MOTOR, expires: true },
+  { type: 'VEHICLE_PHOTO',     label: 'Vehicle photo (plate visible)', tracks: MOTOR, expires: false },
+  { type: 'GUARANTOR',         label: 'Guarantor’s signed note (photo)', tracks: 'ALL', requiresFlag: 'guarantor', expires: false },
+  // Lagos-conditional layer (motorised tracks only — a bicycle rider gives none of these):
+  { type: 'LASRRA',            label: 'LASRRA card',               tracks: MOTOR,        cities: ['LAGOS'], expires: true },
   { type: 'LASDRI',            label: 'LASDRI card',               tracks: ['CAR'],      cities: ['LAGOS'], expires: true },
   { type: 'HACKNEY_PERMIT',    label: 'Hackney/commercial permit', tracks: ['CAR'],      cities: ['LAGOS'], expires: true },
   { type: 'KEKE_PERMIT',       label: 'Tricycle (LGA/union) permit', tracks: ['KEKE'],   cities: ['LAGOS'], expires: true },

@@ -50,11 +50,15 @@ export class InMemoryDocumentRepo implements DocumentRepo {
   async getProfile(riderId: string): Promise<RiderProfile> {
     return this.profileByRider.get(riderId) ?? { track: null, nameVerified: false };
   }
-  async setProfile(riderId: string, patch: { legalName?: string; vehiclePlate?: string; vehicleColor?: string }): Promise<void> {
+  async setProfile(riderId: string, patch: { legalName?: string; vehiclePlate?: string; vehicleColor?: string; guarantorName?: string; guarantorPhone?: string; guarantorAddress?: string; guarantorRelationship?: string }): Promise<void> {
     const p = this.ensureProfile(riderId);
     if (patch.legalName !== undefined) { p.legalName = patch.legalName; p.nameVerified = false; } // re-verify on change
     if (patch.vehiclePlate !== undefined) p.vehiclePlate = patch.vehiclePlate;
     if (patch.vehicleColor !== undefined) p.vehicleColor = patch.vehicleColor;
+    if (patch.guarantorName !== undefined) p.guarantorName = patch.guarantorName;
+    if (patch.guarantorPhone !== undefined) p.guarantorPhone = patch.guarantorPhone;
+    if (patch.guarantorAddress !== undefined) p.guarantorAddress = patch.guarantorAddress;
+    if (patch.guarantorRelationship !== undefined) p.guarantorRelationship = patch.guarantorRelationship;
   }
   async setNameVerified(riderId: string, verified: boolean): Promise<void> {
     this.ensureProfile(riderId).nameVerified = verified;

@@ -6,7 +6,7 @@ import { DocumentsService } from './documents.service.js';
 import type { DocumentType, VehicleTrack } from './domain/document-catalog.js';
 import { VEHICLE_COLORS, type VehicleColor } from './domain/rider-profile.js';
 
-const TRACKS: VehicleTrack[] = ['BIKE', 'CAR', 'KEKE'];
+const TRACKS: VehicleTrack[] = ['BIKE', 'CAR', 'KEKE', 'BICYCLE'];
 const TYPES: DocumentType[] = [
   'PROFILE_PHOTO', 'GOV_ID', 'LICENSE', 'ADDRESS_PROOF', 'VEHICLE_REG', 'PROOF_OF_OWNERSHIP',
   'ROADWORTHINESS', 'INSURANCE', 'VEHICLE_PHOTO', 'GUARANTOR', 'LASRRA', 'LASDRI', 'HACKNEY_PERMIT', 'KEKE_PERMIT',
@@ -18,6 +18,11 @@ class RiderProfileDto {
   @IsOptional() @IsString() @Length(2, 80) legalName?: string;
   @IsOptional() @IsString() @Length(4, 20) vehiclePlate?: string;
   @IsOptional() @IsIn(VEHICLE_COLORS) vehicleColor?: VehicleColor;
+  // Guarantor details (structured; the signed-note photo is uploaded separately as the GUARANTOR doc).
+  @IsOptional() @IsString() @Length(2, 80) guarantorName?: string;
+  @IsOptional() @IsString() @Length(7, 20) guarantorPhone?: string;
+  @IsOptional() @IsString() @Length(4, 160) guarantorAddress?: string;
+  @IsOptional() @IsString() @Length(2, 40) guarantorRelationship?: string;
 }
 
 class UploadDto {
