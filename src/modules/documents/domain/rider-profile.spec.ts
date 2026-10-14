@@ -10,7 +10,7 @@ test('vehicle colour must be in the palette', () => {
 });
 
 test('legal name accepts real names, rejects junk', () => {
-  assert.equal(isValidLegalName('Tolu Olonibua'), true);
+  assert.equal(isValidLegalName('Ada Okeke'), true);
   assert.equal(isValidLegalName("O'Brien-Smith"), true);
   assert.equal(isValidLegalName('A'), false);
   assert.equal(isValidLegalName('  '), false);

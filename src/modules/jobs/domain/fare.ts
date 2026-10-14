@@ -6,23 +6,25 @@ import { etaMinutes, roadMeters } from './eta.js';
 export type JobType = 'DELIVERY' | 'RIDE' | 'ERRAND';
 
 /**
- * Upfront pricing config (kobo). Tuned so riders are paid fairly for Lagos deliveries — the old
- * distance-only model paid too little (a 5 km trip netted ~₦900). The model now mirrors how Uber/Lyft/
- * Bolt price: base + per-km + per-minute, with a minimum-fare floor so short trips still pay. The
- * per-minute term uses the trip's estimated minutes so time-in-traffic is compensated, not just distance.
+ * Upfront pricing config (kobo). Pricing is DISTANCE-ONLY: base + per-km, with a minimum-fare floor so
+ * short trips still pay. `platformFeePct` is added on top and kept by the platform; the rider receives
+ * the base+distance subtotal.
  *
- * Target: a rider nets ~₦2,800 on a typical short (≈5 km straight-line ≈ 7 km road) Lagos delivery —
- * see fare.spec.ts. This is set against the standalone Lagos bike-dispatch market (₦3,000+ per drop),
- * which is what riders actually compare to — not car ride-hailing. The distance charge is billed on the
- * ESTIMATED ROAD distance (ROAD_DISTANCE_FACTOR), and the per-minute term uses a realistic 15 km/h city
- * average, so a rider is paid for the trip they ride and the time they lose in traffic.
- * All values are deterministic + testable; retune here with real ops data. `platformFeePct` is added on
- * top and kept by the platform; the rider receives the base+distance+time subtotal.
+ * The per-minute (time) charge was DROPPED (founder decision, Oct 2026). Rationale: the ETA is derived
+ * from distance, so charging per-minute effectively billed distance twice and made long-distance trips
+ * (>18 km — the majority of Lagos deliveries) too expensive for customers, and it made two same-distance
+ * trips quote different prices (time swings with the route). Distance-only pricing is cheaper on long
+ * runs and fully predictable: same distance → same price, every time. `perMinuteMinor` is kept at 0 so
+ * the breakdown shape is unchanged and the time charge can be re-enabled later from one line if needed.
+ *
+ * The distance charge is billed on the ESTIMATED ROAD distance (ROAD_DISTANCE_FACTOR), not the crow-flies
+ * input, so a rider is paid for the trip they actually ride. All values are deterministic + testable;
+ * retune here with real ops data.
  */
 export const FARE_CONFIG = {
   baseMinor: { DELIVERY: 70_000, RIDE: 90_000, ERRAND: 70_000 },      // ₦700 / ₦900 / ₦700 base (errand trip = delivery)
   perKmMinor: 22_000,                                 // ₦220 / road-km
-  perMinuteMinor: 2_000,                              // ₦20 / min (minutes from the 15 km/h city ETA)
+  perMinuteMinor: 0,                                  // TIME CHARGE DROPPED — distance-only pricing (set >0 to re-enable)
   minimumMinor: { DELIVERY: 150_000, RIDE: 180_000, ERRAND: 150_000 }, // ₦1,500 / ₦1,800 / ₦1,500 rider-subtotal floor
   platformFeePct: 10,                                 // %
 } as const;
