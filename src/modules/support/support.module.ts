@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { AuthModule } from '../auth/auth.module.js';
 import { SupportService } from './support.service.js';
 import { SupportController } from './support.controller.js';
 import { SUPPORT_REPO } from './ports.js';
@@ -9,7 +10,7 @@ import { PrismaSupportRepo } from './adapters/prisma-support.repo.js';
 const usePg = process.env.DB_DRIVER === 'postgres';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, AuthModule],
   controllers: [SupportController],
   providers: [
     SupportService,

@@ -161,6 +161,9 @@ export const envSchema = z.object({
   // If RESEND_API_KEY is set, real emails are sent; otherwise emails log to the console.
   RESEND_API_KEY: z.string().default(''),
   EMAIL_FROM: z.string().default('Rydafirst <onboarding@resend.dev>'),
+  // Where new support requests / complaints are emailed to (the admin inbox). Blank disables the email
+  // (in-app admin push still fires). Sending real mail also needs RESEND_API_KEY + a verified EMAIL_FROM.
+  SUPPORT_EMAIL: z.string().default('rydafirst@gmail.com'),
 
   // --- App Store reviewer login --------------------------------------------
   // Lets Apple's App Review sign in to this OTP-only app without receiving a live code.

@@ -21,11 +21,15 @@ const AGENT = 'agent-1';
 
 function make() {
   const recorded: { userId: string; title: string }[] = [];
+  const emails: { to: string; subject: string }[] = [];
   const notify = {
     async record(userId: string, n: { title: string }) { recorded.push({ userId, title: n.title }); },
   } as unknown as NotificationsService;
-  const svc = new SupportService(new InMemorySupportRepo(), notify);
-  return { svc, recorded };
+  const email = { async send(m: { to: string; subject: string }) { emails.push(m); } } as never;
+  const users = { async getBrief() { return { id: 'user-1', name: 'Ada', phone: '+2348000000000', role: 'CUSTOMER' as const }; } } as never;
+  const env = { SUPPORT_EMAIL: 'rydafirst@gmail.com' } as never;
+  const svc = new SupportService(new InMemorySupportRepo(), notify, email, users, env);
+  return { svc, recorded, emails };
 }
 
 test('starting a thread seeds the bot opening prompt', async () => {
@@ -39,7 +43,7 @@ test('starting a thread seeds the bot opening prompt', async () => {
 
 test('bot funnel advances then escalates with a 30-min deadline and notifies admins', async () => {
   process.env.SUPPORT_ADMIN_IDS = 'admin-a, admin-b';
-  const { svc, recorded } = make();
+  const { svc, recorded, emails } = make();
   const t = await svc.startThread(USER, 'PAYMENT'); // PAYMENT = [choice, freetext]
 
   // Answer the choice step — not complete yet, bot asks the free-text question.
@@ -55,6 +59,10 @@ test('bot funnel advances then escalates with a 30-min deadline and notifies adm
 
   // Both configured support admins were alerted.
   assert.deepEqual(recorded.map((r) => r.userId).sort(), ['admin-a', 'admin-b']);
+  // ...and the admin inbox got a summary email with the issue transcript.
+  assert.equal(emails.length, 1, 'one admin email sent on escalation');
+  assert.equal(emails[0]!.to, 'rydafirst@gmail.com');
+  assert.match(emails[0]!.subject, /support request/i);
   delete process.env.SUPPORT_ADMIN_IDS;
 });
 

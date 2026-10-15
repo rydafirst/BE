@@ -1,6 +1,10 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { sanitizeMessageBody } from '../chat/domain/message.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { EMAIL_SENDER, type EmailSender } from '../email/email.port.js';
+import { USER_REPO, type UserRepository } from '../auth/ports.js';
+import { ENV } from '../../config/config.module.js';
+import type { Env } from '../../config/env.validation.js';
 import {
   botOpeningPrompt, botStep, escalate, isFlowComplete, isSupportCategory,
   type SupportCategory,
@@ -27,9 +31,13 @@ const OPEN_LIMIT = 100;
  */
 @Injectable()
 export class SupportService {
+  private readonly log = new Logger(SupportService.name);
   constructor(
     @Inject(SUPPORT_REPO) private readonly repo: SupportRepo,
     private readonly notify: NotificationsService,
+    @Inject(EMAIL_SENDER) private readonly email: EmailSender,
+    @Inject(USER_REPO) private readonly users: UserRepository,
+    @Inject(ENV) private readonly env: Env,
   ) {}
 
   /** Support admins to alert on escalation: SUPPORT_ADMIN_IDS (comma-separated user ids), else none. */
@@ -82,8 +90,10 @@ export class SupportService {
         threadId, sender: 'BOT',
         body: 'Thank you. Your issue has been sent to our support team — an agent will join within 30 minutes.',
       });
+      const messages = await this.repo.listMessages(threadId, HISTORY_LIMIT);
       await this.notifyAdmins();
-      return { thread: updated, messages: await this.repo.listMessages(threadId, HISTORY_LIMIT) };
+      await this.emailAdmin(updated, messages);
+      return { thread: updated, messages };
     }
 
     const next = botStep(thread.category, nextStep);
@@ -185,6 +195,50 @@ export class SupportService {
           urgent: true,
         });
       } catch { /* best-effort — escalation already persisted */ }
+    }
+  }
+
+  /**
+   * Email the admin inbox (SUPPORT_EMAIL) a full summary of a new support request/complaint — who it's
+   * from (name + phone so they can call back), the trip it's about, and the whole bot transcript. Fully
+   * best-effort: a mail failure (no key, bad address) is logged and swallowed so it never breaks the
+   * escalation. Does nothing if SUPPORT_EMAIL is blank.
+   */
+  private async emailAdmin(thread: SupportThread, messages: readonly SupportMessage[]): Promise<void> {
+    const to = this.env.SUPPORT_EMAIL?.trim();
+    if (!to) return;
+    try {
+      const brief = await this.users.getBrief(thread.userId).catch(() => null);
+      const name = brief?.name || 'Unknown';
+      const phone = brief?.phone || '—';
+      const role = brief?.role || '—';
+      const category = thread.category.replace(/_/g, ' ');
+      const transcript = messages
+        .map((m) => `${m.sender === 'USER' ? name : m.sender}: ${m.body}`)
+        .join('\n');
+
+      const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+      const subject = `New support request — ${category} (${name})`;
+      const text =
+        `New support request on Rydafirst.\n\n` +
+        `From: ${name} (${role})\nPhone: ${phone}\nCategory: ${category}\n` +
+        `${thread.jobId ? `Trip: ${thread.jobId}\n` : ''}Thread: ${thread.id}\n\n` +
+        `Conversation:\n${transcript}\n\n` +
+        `Reply from the admin support console.`;
+      const html =
+        `<h2>New support request</h2>` +
+        `<p><b>From:</b> ${esc(name)} (${esc(role)})<br/>` +
+        `<b>Phone:</b> ${esc(phone)}<br/>` +
+        `<b>Category:</b> ${esc(category)}<br/>` +
+        `${thread.jobId ? `<b>Trip:</b> ${esc(thread.jobId)}<br/>` : ''}` +
+        `<b>Thread:</b> ${esc(thread.id)}</p>` +
+        `<h3>Conversation</h3>` +
+        `<pre style="white-space:pre-wrap;font-family:inherit">${esc(transcript)}</pre>` +
+        `<p>Reply from the admin support console.</p>`;
+
+      await this.email.send({ to, subject, html, text });
+    } catch (e) {
+      this.log.warn(`Support admin email failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }
