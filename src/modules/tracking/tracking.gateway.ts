@@ -32,18 +32,35 @@ export class TrackingGateway {
     return { ok: true };
   }
 
-  /** Assigned rider publishes location; throttled, then broadcast to the room. */
+  /** Assigned rider publishes location for ONE job; throttled, then broadcast to the room. */
   @SubscribeMessage('location')
   async location(
     @MessageBody() body: { jobId: string; riderId: string; lat: number; lng: number },
   ): Promise<void> {
     const job = await this.jobs.getJob(body.riderId, body.jobId);
     if (job.riderId !== body.riderId) return; // only the assigned rider may publish
-    const { emitted } = await this.tracking.record(body.jobId, { lat: body.lat, lng: body.lng });
+    await this.publish(body.jobId, body.lat, body.lng);
+  }
+
+  /**
+   * Rider publishes ONE location ping that fans out to EVERY delivery they are currently on, so a rider
+   * stacking two trips keeps both customers' maps live regardless of which trip screen they're viewing.
+   * Only the rider's own engaged jobs are targeted (resolved server-side from riderId), so a rider can
+   * never publish into a job they aren't assigned to.
+   */
+  @SubscribeMessage('locationAll')
+  async locationAll(
+    @MessageBody() body: { riderId: string; lat: number; lng: number },
+  ): Promise<void> {
+    const jobIds = await this.jobs.activeJobIdsForRider(body.riderId);
+    for (const jobId of jobIds) await this.publish(jobId, body.lat, body.lng);
+  }
+
+  /** Throttle + broadcast a rider location to one job's room. */
+  private async publish(jobId: string, lat: number, lng: number): Promise<void> {
+    const { emitted } = await this.tracking.record(jobId, { lat, lng });
     if (emitted) {
-      this.server.to(this.room(body.jobId)).emit('location', {
-        jobId: body.jobId, point: { lat: body.lat, lng: body.lng }, at: Date.now(),
-      });
+      this.server.to(this.room(jobId)).emit('location', { jobId, point: { lat, lng }, at: Date.now() });
     }
   }
 

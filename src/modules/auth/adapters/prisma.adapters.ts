@@ -69,12 +69,12 @@ export class PrismaUserRepo implements UserRepository {
       const created = await this.db.user.create({ data: { phone, role, ...(email ? { email } : {}), ...(name ? { name } : {}) } as PrismaWrite });
       return { id: created.id, role: created.role as Role };
     }
-    // Follow the role the user is signing in as (a phone can be a customer today, a rider tomorrow),
-    // but never downgrade an admin through OTP login. Keep the latest email on file for receipts.
-    // Set name only if the account doesn't already have one (established at sign-up).
-    const nextRole: Role = existing.role === 'ADMIN' ? (existing.role as Role) : role;
+    // Role is STICKY: once an account exists, its role never changes on login. Whatever a phone first
+    // registered as (customer or rider) is what it stays — signing in, out, and back in can never flip
+    // it. So we keep existing.role untouched and ignore the role the client requested. Keep the latest
+    // email on file for receipts; set name only if the account doesn't already have one (set at sign-up).
     const hasName = Boolean((existing as { name?: string | null }).name);
-    const data = { role: nextRole, ...(email ? { email } : {}), ...(name && !hasName ? { name } : {}) };
+    const data = { ...(email ? { email } : {}), ...(name && !hasName ? { name } : {}) };
     const updated = await this.db.user.update({ where: { phone }, data: data as PrismaWrite });
     return { id: updated.id, role: updated.role as Role };
   }

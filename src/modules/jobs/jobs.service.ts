@@ -782,14 +782,20 @@ export class JobsService {
     if (!(await this.riderAccount.hasAccount(riderId))) {
       throw new ForbiddenException('Add your payout bank account before accepting jobs');
     }
-    // Single active delivery per rider: they must finish or release the job they're on before taking
-    // another. Stops a rider hoarding offers they can't run, and keeps the "resume your active trip"
-    // routing unambiguous (there is at most one). Checked before the claim so we never assign a second
-    // job. (A rider double-tapping two different offers in the same instant is caught by the atomic
-    // claim + this guard; the worst residual case is surfaced in admin, never silent.)
+    // Concurrency cap: a rider may hold up to MAX_ACTIVE_JOBS_PER_RIDER engaged deliveries at once
+    // (default 2 — lets them stack a same-direction second drop). Each job is claimed atomically below
+    // and its escrow/codes/tracking are fully independent, so a second job can never affect the first.
+    // Checked before the claim. (A rider double-tapping two offers in the same instant could momentarily
+    // exceed the cap by one — not money-unsafe since every job is isolated; surfaced in admin ops.)
+    const cap = this.env.MAX_ACTIVE_JOBS_PER_RIDER ?? 2;
     const mine = await this.jobs.listByRider(riderId);
-    if (mine.some((j) => isRiderEngaged(j.status))) {
-      throw new ConflictException('Finish or release your current delivery before accepting another');
+    const activeCount = mine.filter((j) => isRiderEngaged(j.status)).length;
+    if (activeCount >= cap) {
+      throw new ConflictException(
+        cap === 1
+          ? 'Finish or release your current delivery before accepting another'
+          : `You already have ${activeCount} active deliveries (max ${cap}). Finish or release one before accepting another.`,
+      );
     }
     const claimed = await this.jobs.claim(jobId, riderId);
     if (!claimed) throw new ConflictException('Job is no longer available');
@@ -1467,6 +1473,30 @@ export class JobsService {
     return { status: 'CANCELLED', refunded: refund };
   }
 
+  /**
+   * ADMIN override: hand a specific SEARCHING job to a specific rider, even if that rider is already at
+   * the active-delivery cap (this is the manual-dispatch escape hatch). Reuses the SAME atomic claim as a
+   * normal accept, so it can never race a rider self-accepting the same job — exactly one wins. Bypasses
+   * only the per-rider cap and clearance (the admin is vouching); still refuses a rider with no payout
+   * account (money safety) or one serving a lateness suspension.
+   */
+  async adminAssignJob(jobId: string, riderId: string): Promise<Job> {
+    const job = await this.mustFind(jobId);
+    if (job.status !== 'SEARCHING') {
+      throw new ConflictException(`Only a delivery that is searching for a rider can be assigned (this one is ${job.status.replace(/_/g, ' ').toLowerCase()}).`);
+    }
+    if (!(await this.riderAccount.hasAccount(riderId))) {
+      throw new ConflictException('That rider has no payout bank account on file, so they cannot be paid — they must add one first.');
+    }
+    if (this.reliability) await this.reliability.assertNotSuspended(riderId);
+    const claimed = await this.jobs.claim(jobId, riderId);
+    if (!claimed) throw new ConflictException('Job is no longer available — it may have just been taken.');
+    const assigned = await this.mustFind(jobId);
+    await this.notify.record(assigned.customerId, { title: 'Rider assigned', body: 'A rider was assigned to your delivery and is on the way to pickup.', jobId, urgent: true });
+    await this.notify.record(riderId, { title: 'New delivery assigned', body: 'Support assigned a delivery to you. Open the app to start it.', jobId, urgent: true });
+    return assigned;
+  }
+
   async openDispute(actorId: string, jobId: string): Promise<{ status: JobStatus }> {
     const job = await this.mustFind(jobId);
     if (job.customerId !== actorId && job.riderId !== actorId) throw new ForbiddenException();
@@ -1619,6 +1649,16 @@ export class JobsService {
   async jobsForRider(riderId: string): Promise<Job[]> {
     // Rider view: strip per-stop code hashes, and downstream recipients' phones until pickup.
     return (await this.jobs.listByRider(riderId)).map((j) => redactExtraStopsForViewer(j, true));
+  }
+
+  /**
+   * Job ids of every delivery this rider is currently engaged on (accepted → not yet resolved). Used by
+   * the tracking gateway to fan a single live-location ping out to ALL the rider's active trips, so every
+   * waiting customer sees the rider move — not only the one whose screen the rider happens to be viewing.
+   * Only the rider's OWN jobs are returned, so this can never publish to a job the rider isn't assigned.
+   */
+  async activeJobIdsForRider(riderId: string): Promise<string[]> {
+    return (await this.jobs.listByRider(riderId)).filter((j) => isRiderEngaged(j.status)).map((j) => j.id);
   }
 
   async status(jobId: string): Promise<JobStatus> { return (await this.mustFind(jobId)).status; }

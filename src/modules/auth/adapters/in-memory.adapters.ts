@@ -50,8 +50,8 @@ export class InMemoryUserRepo implements UserRepository {
   async upsertByPhone(phone: string, role: Role, email?: string, name?: string): Promise<{ id: string; role: Role }> {
     let u = this.byPhone.get(phone);
     if (!u) { u = { id: randomUUID(), role, phone, ...(email ? { email } : {}), ...(name ? { name } : {}) }; this.byPhone.set(phone, u); this.byId.set(u.id, u); return { id: u.id, role: u.role }; }
-    // Follow the signed-in role (customer today, rider tomorrow); never downgrade an admin.
-    if (u.role !== 'ADMIN') u.role = role;
+    // Role is STICKY: an existing account keeps whatever it first registered as. Signing in as a
+    // different role is ignored — a customer stays a customer, a rider stays a rider, forever.
     if (email) u.email = email; // keep the latest email on file
     if (name && !u.name) u.name = name; // set name once (sign-up); don't overwrite on later logins
     this.byId.set(u.id, u);

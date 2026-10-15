@@ -72,4 +72,10 @@ export class AdminOpsService {
   voidJob(jobId: string): Promise<{ status: string; refunded: boolean }> {
     return this.jobs.adminVoidJob(jobId);
   }
+
+  /** Manually assign a SEARCHING delivery to a specific rider (bypasses the per-rider active cap). */
+  async assignJob(jobId: string, riderId: string): Promise<{ status: string; riderId?: string }> {
+    const job = await this.jobs.adminAssignJob(jobId, riderId);
+    return { status: job.status, ...(job.riderId ? { riderId: job.riderId } : {}) };
+  }
 }

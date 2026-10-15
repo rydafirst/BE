@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
-import { IsBoolean, IsIn, IsOptional } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, Length } from 'class-validator';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { AdminOpsService } from './admin-ops.service.js';
 import { RiderKycService } from '../riders/rider-kyc.service.js';
@@ -7,6 +7,10 @@ import { SettingsService, type LaunchCity } from '../settings/settings.service.j
 
 class KycDecisionDto {
   @IsBoolean() approve!: boolean;
+}
+
+class AssignDto {
+  @IsString() @Length(1, 64) riderId!: string;
 }
 
 class SettingsDto {
@@ -60,6 +64,13 @@ export class AdminController {
   @RequirePermission('admin:finance:manage')
   voidDelivery(@Param('jobId') jobId: string) {
     return this.ops.voidJob(jobId);
+  }
+
+  // Manually assign a SEARCHING delivery to a specific rider (bypasses the per-rider active cap).
+  @Post('ops/deliveries/:jobId/assign')
+  @RequirePermission('admin:finance:manage')
+  assignDelivery(@Param('jobId') jobId: string, @Body() dto: AssignDto) {
+    return this.ops.assignJob(jobId, dto.riderId);
   }
 
   @Get('finance/payouts/pending')

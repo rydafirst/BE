@@ -89,6 +89,11 @@ export const envSchema = z.object({
   // default to tolerate urban GPS drift; tighten only if you see abuse.
   ARRIVAL_RADIUS_M: z.coerce.number().int().positive().default(120),
 
+  // How many active (engaged) deliveries a single rider may hold at once. 1 = the old single-delivery
+  // rule; 2 lets a rider stack a second same-direction drop. Each job's escrow/codes/tracking stay
+  // fully independent — this only relaxes the accept guard. Keep small (2–3) to avoid offer hoarding.
+  MAX_ACTIVE_JOBS_PER_RIDER: z.coerce.number().int().positive().default(2),
+
   // #0 DIRECT DELIVERY: the single switch for the delivery model — flip it, don't hunt code.
   //   'direct'   (default, launch behaviour) — a plain point-to-point trip: book -> pay (escrow) ->
   //              pickup -> deliver -> recipient enters the confirmation code -> escrow releases to the
