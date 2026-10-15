@@ -45,8 +45,8 @@ export class InMemoryRefreshRepo implements RefreshTokenRepository {
 
 @Injectable()
 export class InMemoryUserRepo implements UserRepository {
-  private byPhone = new Map<string, { id: string; role: Role; phone: string; email?: string; name?: string; photoKey?: string }>();
-  private byId = new Map<string, { id: string; role: Role; phone: string; email?: string; name?: string; photoKey?: string }>();
+  private byPhone = new Map<string, { id: string; role: Role; phone: string; email?: string; name?: string; photoKey?: string; referralCode?: string }>();
+  private byId = new Map<string, { id: string; role: Role; phone: string; email?: string; name?: string; photoKey?: string; referralCode?: string }>();
   async upsertByPhone(phone: string, role: Role, email?: string, name?: string): Promise<{ id: string; role: Role }> {
     let u = this.byPhone.get(phone);
     if (!u) { u = { id: randomUUID(), role, phone, ...(email ? { email } : {}), ...(name ? { name } : {}) }; this.byPhone.set(phone, u); this.byId.set(u.id, u); return { id: u.id, role: u.role }; }
@@ -80,6 +80,21 @@ export class InMemoryUserRepo implements UserRepository {
     delete u.email; delete u.name; delete u.photoKey;
     this.byPhone.set(u.phone, u);
     this.byId.set(u.id, u);
+  }
+  async getReferralCode(userId: string): Promise<string | null> {
+    return this.byId.get(userId)?.referralCode ?? null;
+  }
+  async setReferralCode(userId: string, code: string): Promise<void> {
+    for (const u of this.byId.values()) if (u.referralCode === code && u.id !== userId) throw new Error('referral code already taken');
+    const u = this.byId.get(userId); if (u) u.referralCode = code;
+  }
+  async findByReferralCode(code: string): Promise<{ id: string; role: Role } | null> {
+    for (const u of this.byId.values()) if (u.referralCode === code) return { id: u.id, role: u.role };
+    return null;
+  }
+  async getBrief(userId: string): Promise<{ id: string; name: string | null; phone: string | null; role: Role } | null> {
+    const u = this.byId.get(userId);
+    return u ? { id: u.id, name: u.name ?? null, phone: u.phone ?? null, role: u.role } : null;
   }
 }
 

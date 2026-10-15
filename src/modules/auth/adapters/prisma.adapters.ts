@@ -105,4 +105,19 @@ export class PrismaUserRepo implements UserRepository {
       data: { name: null, email: null, photoKey: null, phone: `deleted-${crypto.randomUUID()}` } as PrismaWrite,
     });
   }
+  async getReferralCode(userId: string): Promise<string | null> {
+    const u = await this.db.user.findUnique({ where: { id: userId } });
+    return u ? ((u as { referralCode?: string | null }).referralCode ?? null) : null;
+  }
+  async setReferralCode(userId: string, code: string): Promise<void> {
+    await this.db.user.update({ where: { id: userId }, data: { referralCode: code } as PrismaWrite });
+  }
+  async findByReferralCode(code: string): Promise<{ id: string; role: Role } | null> {
+    const u = await this.db.user.findUnique({ where: { referralCode: code } as never });
+    return u ? { id: u.id, role: u.role as Role } : null;
+  }
+  async getBrief(userId: string): Promise<{ id: string; name: string | null; phone: string | null; role: Role } | null> {
+    const u = await this.db.user.findUnique({ where: { id: userId } });
+    return u ? { id: u.id, name: (u as { name?: string | null }).name ?? null, phone: u.phone ?? null, role: u.role as Role } : null;
+  }
 }

@@ -33,6 +33,6 @@ const deferPayouts = process.env.PAYOUT_DISPATCH !== 'inline';
     { provide: WEBHOOK_INBOX, useClass: usePg ? PrismaWebhookInbox : InMemoryWebhookInbox },
     { provide: PAYOUT_DISPATCHER, useClass: deferPayouts ? DeferredPayoutDispatcher : InlinePayoutDispatcher },
   ],
-  exports: [EscrowService, BANK_DIRECTORY],
+  exports: [EscrowService, BANK_DIRECTORY, PAYMENT_PROVIDER],
 })
 export class PaymentsModule {}

@@ -11,7 +11,8 @@ export interface EffectiveSettings {
   marketplaceEnabled: boolean;
   lateMoneyPenaltyEnabled: boolean;
   launchCity: LaunchCity;
-  overridden: { requireGuarantor: boolean; enforceRiderClearance: boolean; marketplaceEnabled: boolean; lateMoneyPenaltyEnabled: boolean; launchCity: boolean };
+  referralRewardMinor: number;
+  overridden: { requireGuarantor: boolean; enforceRiderClearance: boolean; marketplaceEnabled: boolean; lateMoneyPenaltyEnabled: boolean; launchCity: boolean; referralRewardMinor: boolean };
 }
 
 /**
@@ -38,15 +39,19 @@ export class SettingsService {
       marketplaceEnabled: 'marketplaceEnabled' in o ? o.marketplaceEnabled === 'true' : this.env.MARKETPLACE_ENABLED,
       lateMoneyPenaltyEnabled: 'lateMoneyPenaltyEnabled' in o ? o.lateMoneyPenaltyEnabled === 'true' : this.env.LATE_MONEY_PENALTY_ENABLED,
       launchCity: ('launchCity' in o ? o.launchCity : this.env.LAUNCH_CITY) as LaunchCity,
+      referralRewardMinor: 'referralRewardMinor' in o ? Math.max(0, Number(o.referralRewardMinor) || 0) : this.env.REFERRAL_REWARD_MINOR,
       overridden: {
         requireGuarantor: 'requireGuarantor' in o,
         enforceRiderClearance: 'enforceRiderClearance' in o,
         marketplaceEnabled: 'marketplaceEnabled' in o,
         lateMoneyPenaltyEnabled: 'lateMoneyPenaltyEnabled' in o,
         launchCity: 'launchCity' in o,
+        referralRewardMinor: 'referralRewardMinor' in o,
       },
     };
   }
+
+  async referralRewardMinor(): Promise<number> { return (await this.effective()).referralRewardMinor; }
 
   async requireGuarantor(): Promise<boolean> { return (await this.effective()).requireGuarantor; }
   async enforceRiderClearance(): Promise<boolean> { return (await this.effective()).enforceRiderClearance; }
@@ -54,13 +59,14 @@ export class SettingsService {
   async lateMoneyPenaltyEnabled(): Promise<boolean> { return (await this.effective()).lateMoneyPenaltyEnabled; }
   async launchCity(): Promise<LaunchCity> { return (await this.effective()).launchCity; }
 
-  async update(patch: { requireGuarantor?: boolean; enforceRiderClearance?: boolean; marketplaceEnabled?: boolean; lateMoneyPenaltyEnabled?: boolean; launchCity?: LaunchCity }): Promise<EffectiveSettings> {
+  async update(patch: { requireGuarantor?: boolean; enforceRiderClearance?: boolean; marketplaceEnabled?: boolean; lateMoneyPenaltyEnabled?: boolean; launchCity?: LaunchCity; referralRewardMinor?: number }): Promise<EffectiveSettings> {
     const kv: Record<string, string> = {};
     if (patch.requireGuarantor !== undefined) kv.requireGuarantor = String(patch.requireGuarantor);
     if (patch.enforceRiderClearance !== undefined) kv.enforceRiderClearance = String(patch.enforceRiderClearance);
     if (patch.marketplaceEnabled !== undefined) kv.marketplaceEnabled = String(patch.marketplaceEnabled);
     if (patch.lateMoneyPenaltyEnabled !== undefined) kv.lateMoneyPenaltyEnabled = String(patch.lateMoneyPenaltyEnabled);
     if (patch.launchCity !== undefined) kv.launchCity = patch.launchCity;
+    if (patch.referralRewardMinor !== undefined) kv.referralRewardMinor = String(Math.max(0, Math.round(patch.referralRewardMinor)));
     if (Object.keys(kv).length) await this.store.setMany(kv);
     return this.effective();
   }

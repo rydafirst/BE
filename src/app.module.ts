@@ -24,6 +24,7 @@ import { ChatModule } from './modules/chat/chat.module.js';
 import { SupportModule } from './modules/support/support.module.js';
 import { ProfileModule } from './modules/profile/profile.module.js';
 import { GeoModule } from './modules/geo/geo.module.js';
+import { ReferralsModule } from './modules/referrals/referrals.module.js';
 import { EmailModule } from './modules/email/email.module.js';
 import { EncryptionService } from './common/security/encryption.service.js';
 import { JwtAuthGuard } from './common/auth/jwt-auth.guard.js';
@@ -33,7 +34,7 @@ import { RolesGuard } from './common/auth/roles.guard.js';
 const dataModules = process.env.DB_DRIVER === 'postgres' ? [DatabaseModule, RedisModule] : [];
 
 @Module({
-  imports: [ConfigModule, ...dataModules, EmailModule, HealthModule, AuthModule, IdentityModule, PaymentsModule, JobsModule, ConfirmationsModule, TrackingModule, NotificationsModule, DisputesModule, RidersModule, DocumentsModule, AdminModule, WalletModule, AccountsModule, PresenceModule, ChatModule, SupportModule, ProfileModule, GeoModule, VendorsModule, ReliabilityModule],
+  imports: [ConfigModule, ...dataModules, EmailModule, HealthModule, AuthModule, IdentityModule, PaymentsModule, JobsModule, ConfirmationsModule, TrackingModule, NotificationsModule, DisputesModule, RidersModule, DocumentsModule, AdminModule, WalletModule, AccountsModule, PresenceModule, ChatModule, SupportModule, ProfileModule, GeoModule, VendorsModule, ReliabilityModule, ReferralsModule],
   providers: [
     EncryptionService,
     // Order matters: authenticate first, then authorize.

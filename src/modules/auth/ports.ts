@@ -44,6 +44,16 @@ export interface UserRepository {
    * person. Financial records are retained only as long as the law requires (see privacy policy).
    */
   anonymize(userId: string): Promise<void>;
+
+  // ---- Referrals ----
+  /** The user's own referral code, or null if not generated yet. */
+  getReferralCode(userId: string): Promise<string | null>;
+  /** Persist a freshly-generated referral code. Throws if the code is already taken (unique). */
+  setReferralCode(userId: string, code: string): Promise<void>;
+  /** Resolve a referral code to its owner (the referrer), or null. */
+  findByReferralCode(code: string): Promise<{ id: string; role: Role } | null>;
+  /** A short identity card for admin lists (name + phone + role), or null. */
+  getBrief(userId: string): Promise<{ id: string; name: string | null; phone: string | null; role: Role } | null>;
 }
 export const USER_REPO = Symbol('USER_REPO');
 

@@ -90,11 +90,33 @@ model User {
   email     String?  @unique
   name      String?
   photoKey  String?
+  // A rider's own shareable referral code (generated lazily the first time they open their referral
+  // page). Unique so a code resolves to exactly one referrer.
+  referralCode String? @unique
   createdAt DateTime @default(now())
 
   rider           Rider?
   paymentAccounts PaymentAccount[]
   refreshTokens   RefreshToken[]
+}
+
+// A rider-to-rider referral. Created when a new rider claims a referrer's code at sign-up. The reward
+// is paid to the referrer only after the referred rider completes their first delivery (QUALIFIED is
+// derived from delivery history, not stored) and an admin credits it on the admin referral page.
+model Referral {
+  id          String    @id @default(uuid())
+  referrerId  String    // the rider who shared the code
+  refereeId   String    @unique // the new rider who entered it (one referral per new rider)
+  rewardMinor Int       @default(0) // snapshotted at credit time, in kobo
+  status      String    @default("PENDING") // PENDING | CREDITED | REJECTED
+  createdAt   DateTime  @default(now())
+  creditedAt  DateTime?
+  creditedBy  String?   // admin user id who credited it
+  payoutRef   String?   // provider transfer reference, when paid by bank transfer
+  payoutError String?
+
+  @@index([referrerId])
+  @@index([status])
 }
 
 model Rider {

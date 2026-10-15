@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
-import { IsBoolean, IsIn, IsOptional, IsString, Length } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Length, Min } from 'class-validator';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { AdminOpsService } from './admin-ops.service.js';
 import { RiderKycService } from '../riders/rider-kyc.service.js';
@@ -19,6 +19,7 @@ class SettingsDto {
   @IsOptional() @IsBoolean() marketplaceEnabled?: boolean;
   @IsOptional() @IsBoolean() lateMoneyPenaltyEnabled?: boolean;
   @IsOptional() @IsIn(['LAGOS', 'ABUJA', 'PORT_HARCOURT', 'OTHER']) launchCity?: LaunchCity;
+  @IsOptional() @IsInt() @Min(0) referralRewardMinor?: number;
 }
 
 @Controller({ path: 'admin', version: '1' })

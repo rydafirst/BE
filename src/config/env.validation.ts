@@ -94,6 +94,11 @@ export const envSchema = z.object({
   // fully independent — this only relaxes the accept guard. Keep small (2–3) to avoid offer hoarding.
   MAX_ACTIVE_JOBS_PER_RIDER: z.coerce.number().int().positive().default(2),
 
+  // Rider referral reward (minor units / kobo) paid to the referrer after a referred rider completes
+  // their first delivery and an admin credits it. Default ₦1,000. Overridable at runtime from admin
+  // settings (referralRewardMinor).
+  REFERRAL_REWARD_MINOR: z.coerce.number().int().nonnegative().default(100_000),
+
   // #0 DIRECT DELIVERY: the single switch for the delivery model — flip it, don't hunt code.
   //   'direct'   (default, launch behaviour) — a plain point-to-point trip: book -> pay (escrow) ->
   //              pickup -> deliver -> recipient enters the confirmation code -> escrow releases to the
