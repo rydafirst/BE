@@ -120,4 +120,8 @@ export class PrismaUserRepo implements UserRepository {
     const u = await this.db.user.findUnique({ where: { id: userId } });
     return u ? { id: u.id, name: (u as { name?: string | null }).name ?? null, phone: u.phone ?? null, role: u.role as Role } : null;
   }
+  async findByPhone(phone: string): Promise<{ id: string; role: Role } | null> {
+    const u = await this.db.user.findUnique({ where: { phone } });
+    return u ? { id: u.id, role: u.role as Role } : null;
+  }
 }

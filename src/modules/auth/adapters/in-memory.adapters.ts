@@ -96,6 +96,10 @@ export class InMemoryUserRepo implements UserRepository {
     const u = this.byId.get(userId);
     return u ? { id: u.id, name: u.name ?? null, phone: u.phone ?? null, role: u.role } : null;
   }
+  async findByPhone(phone: string): Promise<{ id: string; role: Role } | null> {
+    const u = this.byPhone.get(phone);
+    return u ? { id: u.id, role: u.role } : null;
+  }
 }
 
 @Injectable()

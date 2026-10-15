@@ -30,7 +30,7 @@ function make(rewardMinor = 100_000): Harness {
   const transfers: string[] = [];
 
   const jobs = { jobsForRider: async (riderId: string) => (deliveries.get(riderId) ?? []).map((status) => ({ status })) } as never;
-  const settings = { referralRewardMinor: async () => rewardMinor } as never;
+  const settings = { referralRewardMinor: async () => rewardMinor, referralsEnabled: async () => true } as never;
   const payout = { getPayout: async (riderId: string) => (payouts.get(riderId) ? { bankCode: '044', accountNumber: '0000000000' } : null) } as never;
   const provider = {
     transfer: async (p: { reference: string }) => { transfers.push(p.reference); return { providerRef: `ref_${transfers.length}` }; },

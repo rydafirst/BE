@@ -14,10 +14,13 @@ export type SupportCategory =
   | 'CONDUCT'
   | 'ACCOUNT'
   | 'APP_ISSUE'
-  | 'OTHER';
+  | 'OTHER'
+  | 'ANNOUNCEMENT'; // admin-initiated message to a user — not startable by users
 
 export type SupportStatus = 'BOT' | 'AWAITING_AGENT' | 'AGENT_JOINED' | 'RESOLVED';
 
+// The categories a USER may start a conversation with. ANNOUNCEMENT is deliberately excluded — only
+// an admin creates those (via adminMessageUser), so users can't open one themselves.
 export const SUPPORT_CATEGORIES: readonly SupportCategory[] = [
   'PAYMENT', 'DELIVERY_ISSUE', 'CONDUCT', 'ACCOUNT', 'APP_ISSUE', 'OTHER',
 ];
@@ -41,6 +44,11 @@ export interface BotStep {
  * free-text step. Copy is short and Nigerian-friendly (plain, warm, no jargon).
  */
 const SCRIPTS: Readonly<Record<SupportCategory, readonly BotStep[]>> = {
+  // ANNOUNCEMENT threads are created by an admin and open straight at AGENT_JOINED, so this script is
+  // never actually run — it exists only to satisfy the exhaustive map. (Users can't start this category.)
+  ANNOUNCEMENT: [
+    { kind: 'freetext', prompt: 'You can reply to the Rydafirst team here.' },
+  ],
   PAYMENT: [
     {
       kind: 'choice',

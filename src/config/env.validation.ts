@@ -63,6 +63,9 @@ export const envSchema = z.object({
   LAUNCH_CITY: z.enum(['LAGOS', 'ABUJA', 'PORT_HARCOURT', 'OTHER']).default('LAGOS'),
   // Whether a guarantor document is required to onboard (off by default; mirrors Uber/Bolt).
   REQUIRE_GUARANTOR: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  // Rider document types switched OFF by default (comma-separated, e.g. 'PROOF_OF_OWNERSHIP,INSURANCE').
+  // Overridable at runtime from admin settings. Identity docs (PROFILE_PHOTO, GOV_ID) can never be off.
+  DISABLED_DOC_TYPES: z.string().default(''),
   // Fail-closed rider gate: when 'true' (default) a rider must have all documents approved before
   // they can go online OR accept a job. Set 'false' only for a staged rollout before the document
   // pipeline is live (e.g. R2 not yet configured) — it re-opens the gate, so keep it on in prod.
@@ -98,6 +101,9 @@ export const envSchema = z.object({
   // their first delivery and an admin credits it. Default ₦1,000. Overridable at runtime from admin
   // settings (referralRewardMinor).
   REFERRAL_REWARD_MINOR: z.coerce.number().int().nonnegative().default(100_000),
+  // Master switch for the whole referral program. When off, the code box is hidden at sign-up, new
+  // claims are refused, and the Invite & earn card is hidden. Overridable from admin settings.
+  REFERRALS_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
 
   // #0 DIRECT DELIVERY: the single switch for the delivery model — flip it, don't hunt code.
   //   'direct'   (default, launch behaviour) — a plain point-to-point trip: book -> pay (escrow) ->

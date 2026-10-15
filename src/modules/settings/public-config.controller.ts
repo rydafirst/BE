@@ -14,7 +14,8 @@ export class PublicConfigController {
 
   @Public()
   @Get()
-  async config(): Promise<{ marketplaceEnabled: boolean }> {
-    return { marketplaceEnabled: await this.settings.marketplaceEnabled() };
+  async config(): Promise<{ marketplaceEnabled: boolean; referralsEnabled: boolean }> {
+    const s = await this.settings.effective();
+    return { marketplaceEnabled: s.marketplaceEnabled, referralsEnabled: s.referralsEnabled };
   }
 }

@@ -5,6 +5,7 @@ import { ValidationPipe, Logger, VersioningType } from '@nestjs/common';
 import helmet from 'helmet';
 import { AppModule } from './app.module.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
+import { RedisIoAdapter } from './common/ws/redis-io.adapter.js';
 import { validateEnv } from './config/env.validation.js';
 
 async function bootstrap(): Promise<void> {
@@ -32,6 +33,16 @@ async function bootstrap(): Promise<void> {
 
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableShutdownHooks();
+
+  // Real-time scaling: when Redis is configured (production), broadcast WebSocket events through a
+  // Redis pub/sub adapter so live tracking reaches the right room across EVERY backend instance.
+  // Without it, running more than one instance silently breaks tracking across instances. In dev/
+  // memory mode (no Redis) the default in-process adapter is used — identical on a single instance.
+  if (env.REDIS_URL) {
+    const redisIoAdapter = new RedisIoAdapter(app, env.REDIS_URL);
+    await redisIoAdapter.connectToRedis();
+    app.useWebSocketAdapter(redisIoAdapter);
+  }
 
   // Bind to 0.0.0.0 so the container is reachable on hosts like Railway (not just localhost).
   await app.listen(env.PORT, '0.0.0.0');

@@ -26,7 +26,10 @@ function make() {
     async record(userId: string, n: { title: string }) { recorded.push({ userId, title: n.title }); },
   } as unknown as NotificationsService;
   const email = { async send(m: { to: string; subject: string }) { emails.push(m); } } as never;
-  const users = { async getBrief() { return { id: 'user-1', name: 'Ada', phone: '+2348000000000', role: 'CUSTOMER' as const }; } } as never;
+  const users = {
+    async getBrief() { return { id: 'user-1', name: 'Ada', phone: '+2348000000000', role: 'CUSTOMER' as const }; },
+    async findByPhone(phone: string) { return phone === '+2348000000000' ? { id: USER, role: 'CUSTOMER' as const } : null; },
+  } as never;
   const env = { SUPPORT_EMAIL: 'rydafirst@gmail.com' } as never;
   const svc = new SupportService(new InMemorySupportRepo(), notify, email, users, env);
   return { svc, recorded, emails };
@@ -64,6 +67,30 @@ test('bot funnel advances then escalates with a 30-min deadline and notifies adm
   assert.equal(emails[0]!.to, 'rydafirst@gmail.com');
   assert.match(emails[0]!.subject, /support request/i);
   delete process.env.SUPPORT_ADMIN_IDS;
+});
+
+test('admin can message a user by phone; it lands in their inbox and they can reply', async () => {
+  const { svc, recorded } = make();
+  const thread = await svc.adminMessageUser(AGENT, '+2348000000000', 'Hello from the Rydafirst team.');
+  assert.equal(thread.category, 'ANNOUNCEMENT');
+  assert.equal(thread.status, 'AGENT_JOINED');
+
+  // The user sees it in their inbox…
+  const inbox = await svc.listMyThreads(USER);
+  assert.ok(inbox.some((t) => t.id === thread.id), 'thread is in the user inbox');
+  const msgs = await svc.listMessages(USER, thread.id);
+  assert.equal(msgs[0]!.sender, 'AGENT');
+  assert.match(msgs[0]!.body, /Rydafirst team/);
+  // …and can reply.
+  const reply = await svc.postMessage(USER, thread.id, 'Thanks, got it.');
+  assert.equal(reply.sender, 'USER');
+  // The user was notified.
+  assert.ok(recorded.some((r) => r.userId === USER), 'user notified of the admin message');
+});
+
+test('admin messaging an unknown phone fails cleanly', async () => {
+  const { svc } = make();
+  await assert.rejects(() => svc.adminMessageUser(AGENT, '+2349999999999', 'hi'), /No account/i);
 });
 
 test('a user cannot touch another user’s thread (own-only)', async () => {

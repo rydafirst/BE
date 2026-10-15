@@ -54,6 +54,8 @@ export interface UserRepository {
   findByReferralCode(code: string): Promise<{ id: string; role: Role } | null>;
   /** A short identity card for admin lists (name + phone + role), or null. */
   getBrief(userId: string): Promise<{ id: string; name: string | null; phone: string | null; role: Role } | null>;
+  /** Resolve a phone number to its account (for admin-initiated contact), or null. */
+  findByPhone(phone: string): Promise<{ id: string; role: Role } | null>;
 }
 export const USER_REPO = Symbol('USER_REPO');
 

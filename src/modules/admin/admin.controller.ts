@@ -1,9 +1,10 @@
 import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Length, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, Length, Min } from 'class-validator';
 import { RequirePermission } from '../../common/auth/roles.decorator.js';
 import { AdminOpsService } from './admin-ops.service.js';
 import { RiderKycService } from '../riders/rider-kyc.service.js';
 import { SettingsService, type LaunchCity } from '../settings/settings.service.js';
+import { ALL_TRACKS, toggleableCatalog } from '../documents/domain/document-catalog.js';
 
 class KycDecisionDto {
   @IsBoolean() approve!: boolean;
@@ -20,6 +21,10 @@ class SettingsDto {
   @IsOptional() @IsBoolean() lateMoneyPenaltyEnabled?: boolean;
   @IsOptional() @IsIn(['LAGOS', 'ABUJA', 'PORT_HARCOURT', 'OTHER']) launchCity?: LaunchCity;
   @IsOptional() @IsInt() @Min(0) referralRewardMinor?: number;
+  @IsOptional() @IsBoolean() referralsEnabled?: boolean;
+  // Per-vehicle hidden documents: { CAR: ['INSURANCE'], BIKE: [...] }. Identity docs can't be hidden
+  // (the catalogue locks them regardless), so no per-type enum check is needed here.
+  @IsOptional() @IsObject() disabledDocByTrack?: Record<string, string[]>;
 }
 
 @Controller({ path: 'admin', version: '1' })
@@ -40,6 +45,13 @@ export class AdminController {
   @RequirePermission('admin:settings:manage')
   updateSettings(@Body() dto: SettingsDto) {
     return this.settings.update(dto);
+  }
+
+  /** The admin-toggleable rider documents and which vehicle tracks each applies to (per-vehicle matrix). */
+  @Get('documents/catalog')
+  @RequirePermission('admin:settings:manage')
+  documentCatalog() {
+    return { tracks: ALL_TRACKS, items: toggleableCatalog() };
   }
 
   @Get('ops/jobs/active')

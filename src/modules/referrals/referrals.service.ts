@@ -17,6 +17,7 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const CODE_LEN = 6;
 
 export interface MyReferral {
+  enabled: boolean;    // whether the referral program is currently on
   code: string;
   link: string;
   rewardMinor: number; // what a referrer earns per qualified rider (current)
@@ -62,12 +63,14 @@ export class ReferralsService {
   /** The rider's referral code + link + running totals. Generates the code on first access. */
   async mine(riderId: string): Promise<MyReferral> {
     const code = await this.ensureCode(riderId);
-    const [rows, rewardMinor] = await Promise.all([
+    const [rows, rewardMinor, enabled] = await Promise.all([
       this.repo.listByReferrer(riderId),
       this.settings.referralRewardMinor(),
+      this.settings.referralsEnabled(),
     ]);
     const credited = rows.filter((r) => r.status === 'CREDITED');
     return {
+      enabled,
       code,
       link: `${WEB_BASE}/login?role=rider&ref=${code}`,
       rewardMinor,
@@ -80,6 +83,7 @@ export class ReferralsService {
 
   /** A new rider enters a referral code at sign-up (before their first delivery). Riders only. */
   async claim(refereeId: string, rawCode: string): Promise<{ ok: true }> {
+    if (!(await this.settings.referralsEnabled())) throw new ConflictException('Referrals are not available right now');
     const code = rawCode.trim().toUpperCase();
     if (!code) throw new BadRequestException('Enter a referral code');
 

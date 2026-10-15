@@ -27,6 +27,21 @@ test('keke track pulls in the tricycle permit', () => {
   assert.ok(requiredDocuments('KEKE', LAGOS).includes('KEKE_PERMIT'));
 });
 
+test('admin-disabled document types are dropped from the required set', () => {
+  const base = requiredDocuments('CAR', LAGOS);
+  assert.ok(base.includes('PROOF_OF_OWNERSHIP'));
+  const req = requiredDocuments('CAR', { ...LAGOS, disabledTypes: ['PROOF_OF_OWNERSHIP', 'INSURANCE'] });
+  assert.ok(!req.includes('PROOF_OF_OWNERSHIP'), 'proof of ownership hidden');
+  assert.ok(!req.includes('INSURANCE'), 'insurance hidden');
+  assert.ok(req.includes('LICENSE'), 'other docs untouched');
+});
+
+test('identity documents can never be disabled (locked on)', () => {
+  const req = requiredDocuments('BIKE', { ...LAGOS, disabledTypes: ['PROFILE_PHOTO', 'GOV_ID'] });
+  assert.ok(req.includes('PROFILE_PHOTO'), 'profile photo stays required');
+  assert.ok(req.includes('GOV_ID'), 'government ID stays required');
+});
+
 test('bicycle track asks for identity docs only — no licence, vehicle or permit documents', () => {
   const req = requiredDocuments('BICYCLE', LAGOS);
   // Only the identity/onboarding basics a non-registered pedal-bike rider can actually provide.

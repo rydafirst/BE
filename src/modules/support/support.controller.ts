@@ -19,6 +19,11 @@ class MessageDto {
   @IsString() @Length(1, MAX_MESSAGE_LEN) body!: string;
 }
 
+class AdminMessageDto {
+  @IsString() @Length(6, 20) phone!: string;
+  @IsString() @Length(1, MAX_MESSAGE_LEN) body!: string;
+}
+
 @Controller({ path: 'support', version: '1' })
 export class SupportController {
   constructor(private readonly support: SupportService) {}
@@ -79,5 +84,12 @@ export class SupportController {
   @RequirePermission('admin:support:manage')
   resolve(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.support.resolveThread(user.id, id);
+  }
+
+  /** Admin → user: send an official "Message from Rydafirst" to a specific account by phone. */
+  @Post('agent/message-user')
+  @RequirePermission('admin:support:manage')
+  messageUser(@CurrentUser() user: AuthUser, @Body() dto: AdminMessageDto) {
+    return this.support.adminMessageUser(user.id, dto.phone, dto.body);
   }
 }

@@ -170,6 +170,36 @@ export class SupportService {
     return this.repo.setStatus(threadId, 'RESOLVED');
   }
 
+  /**
+   * Admin-initiated outreach: send an official "Message from Rydafirst" to a specific user (rider or
+   * customer) by phone. It lands in that user's Help & support inbox as an ANNOUNCEMENT thread already
+   * joined by the admin, so the user can reply and it becomes a normal support conversation. Not a
+   * personal/peer message — the sender is the Rydafirst team.
+   */
+  async adminMessageUser(adminId: string, phone: string, rawBody: unknown): Promise<SupportThread> {
+    let body: string;
+    try {
+      body = sanitizeMessageBody(rawBody);
+    } catch (e) {
+      throw new BadRequestException(e instanceof Error ? e.message : 'Invalid message');
+    }
+    const user = await this.users.findByPhone(phone.trim());
+    if (!user) throw new NotFoundException('No account found for that phone number');
+
+    const thread = await this.repo.createThread({ userId: user.id, category: 'ANNOUNCEMENT', status: 'AGENT_JOINED' });
+    await this.repo.assignAgent(thread.id, adminId);
+    const updated = await this.repo.setStatus(thread.id, 'AGENT_JOINED');
+    await this.repo.addMessage({ threadId: thread.id, sender: 'AGENT', senderId: adminId, body });
+    try {
+      await this.notify.record(user.id, {
+        title: 'Message from Rydafirst',
+        body: 'You have a new message from the Rydafirst team. Tap to read and reply.',
+        urgent: true,
+      });
+    } catch { /* best-effort — the message is already stored */ }
+    return updated;
+  }
+
   // ---- helpers ----
 
   private async mustFind(threadId: string): Promise<SupportThread> {

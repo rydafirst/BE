@@ -12,7 +12,30 @@ export interface EffectiveSettings {
   lateMoneyPenaltyEnabled: boolean;
   launchCity: LaunchCity;
   referralRewardMinor: number;
-  overridden: { requireGuarantor: boolean; enforceRiderClearance: boolean; marketplaceEnabled: boolean; lateMoneyPenaltyEnabled: boolean; launchCity: boolean; referralRewardMinor: boolean };
+  referralsEnabled: boolean;
+  /** Rider document types switched OFF, PER VEHICLE TRACK (e.g. { CAR: ['INSURANCE'] }). Hidden on every client. */
+  disabledDocByTrack: Record<string, string[]>;
+  overridden: { requireGuarantor: boolean; enforceRiderClearance: boolean; marketplaceEnabled: boolean; lateMoneyPenaltyEnabled: boolean; launchCity: boolean; referralRewardMinor: boolean; referralsEnabled: boolean; disabledDocByTrack: boolean };
+}
+
+const TRACKS_FOR_SETTINGS = ['BIKE', 'CAR', 'KEKE', 'BICYCLE'] as const;
+
+/** Parse the stored per-track disable map (JSON), falling back to an env global list applied to every track. */
+function parseDisabledByTrack(stored: string | undefined, envGlobal: string): Record<string, string[]> {
+  if (stored) {
+    try {
+      const obj = JSON.parse(stored) as Record<string, unknown>;
+      const out: Record<string, string[]> = {};
+      for (const tr of TRACKS_FOR_SETTINGS) {
+        const list = obj[tr];
+        if (Array.isArray(list)) out[tr] = list.map(String).map((s) => s.trim()).filter(Boolean);
+      }
+      return out;
+    } catch { /* fall through to env */ }
+  }
+  const global = envGlobal.split(',').map((s) => s.trim()).filter(Boolean);
+  if (global.length === 0) return {};
+  return Object.fromEntries(TRACKS_FOR_SETTINGS.map((tr) => [tr, [...global]]));
 }
 
 /**
@@ -40,6 +63,8 @@ export class SettingsService {
       lateMoneyPenaltyEnabled: 'lateMoneyPenaltyEnabled' in o ? o.lateMoneyPenaltyEnabled === 'true' : this.env.LATE_MONEY_PENALTY_ENABLED,
       launchCity: ('launchCity' in o ? o.launchCity : this.env.LAUNCH_CITY) as LaunchCity,
       referralRewardMinor: 'referralRewardMinor' in o ? Math.max(0, Number(o.referralRewardMinor) || 0) : this.env.REFERRAL_REWARD_MINOR,
+      referralsEnabled: 'referralsEnabled' in o ? o.referralsEnabled === 'true' : this.env.REFERRALS_ENABLED,
+      disabledDocByTrack: parseDisabledByTrack(o.disabledDocByTrack, this.env.DISABLED_DOC_TYPES ?? ''),
       overridden: {
         requireGuarantor: 'requireGuarantor' in o,
         enforceRiderClearance: 'enforceRiderClearance' in o,
@@ -47,8 +72,17 @@ export class SettingsService {
         lateMoneyPenaltyEnabled: 'lateMoneyPenaltyEnabled' in o,
         launchCity: 'launchCity' in o,
         referralRewardMinor: 'referralRewardMinor' in o,
+        referralsEnabled: 'referralsEnabled' in o,
+        disabledDocByTrack: 'disabledDocByTrack' in o,
       },
     };
+  }
+
+  async referralsEnabled(): Promise<boolean> { return (await this.effective()).referralsEnabled; }
+
+  /** Document types switched off for a specific vehicle track. */
+  async disabledDocTypesForTrack(track: string): Promise<string[]> {
+    return (await this.effective()).disabledDocByTrack[track] ?? [];
   }
 
   async referralRewardMinor(): Promise<number> { return (await this.effective()).referralRewardMinor; }
@@ -59,7 +93,7 @@ export class SettingsService {
   async lateMoneyPenaltyEnabled(): Promise<boolean> { return (await this.effective()).lateMoneyPenaltyEnabled; }
   async launchCity(): Promise<LaunchCity> { return (await this.effective()).launchCity; }
 
-  async update(patch: { requireGuarantor?: boolean; enforceRiderClearance?: boolean; marketplaceEnabled?: boolean; lateMoneyPenaltyEnabled?: boolean; launchCity?: LaunchCity; referralRewardMinor?: number }): Promise<EffectiveSettings> {
+  async update(patch: { requireGuarantor?: boolean; enforceRiderClearance?: boolean; marketplaceEnabled?: boolean; lateMoneyPenaltyEnabled?: boolean; launchCity?: LaunchCity; referralRewardMinor?: number; referralsEnabled?: boolean; disabledDocByTrack?: Record<string, string[]> }): Promise<EffectiveSettings> {
     const kv: Record<string, string> = {};
     if (patch.requireGuarantor !== undefined) kv.requireGuarantor = String(patch.requireGuarantor);
     if (patch.enforceRiderClearance !== undefined) kv.enforceRiderClearance = String(patch.enforceRiderClearance);
@@ -67,6 +101,16 @@ export class SettingsService {
     if (patch.lateMoneyPenaltyEnabled !== undefined) kv.lateMoneyPenaltyEnabled = String(patch.lateMoneyPenaltyEnabled);
     if (patch.launchCity !== undefined) kv.launchCity = patch.launchCity;
     if (patch.referralRewardMinor !== undefined) kv.referralRewardMinor = String(Math.max(0, Math.round(patch.referralRewardMinor)));
+    if (patch.referralsEnabled !== undefined) kv.referralsEnabled = String(patch.referralsEnabled);
+    // Stored as JSON: { TRACK: [types] }. Only known tracks with non-empty lists are kept.
+    if (patch.disabledDocByTrack !== undefined) {
+      const clean: Record<string, string[]> = {};
+      for (const tr of TRACKS_FOR_SETTINGS) {
+        const list = patch.disabledDocByTrack[tr];
+        if (Array.isArray(list) && list.length) clean[tr] = [...new Set(list.map((s) => s.trim()).filter(Boolean))];
+      }
+      kv.disabledDocByTrack = JSON.stringify(clean);
+    }
     if (Object.keys(kv).length) await this.store.setMany(kv);
     return this.effective();
   }

@@ -56,6 +56,29 @@ export const DOCUMENT_SPECS: readonly DocumentSpec[] = [
 export interface CatalogContext {
   city: City;
   requireGuarantor: boolean;
+  /** Document types the admin has switched OFF — hidden from the rider checklist on every client. */
+  disabledTypes?: readonly DocumentType[];
+}
+
+// Core identity/KYC documents that can never be turned off from admin (a rider is not a rider without
+// a face and a government ID). Everything else is admin-toggleable.
+export const LOCKED_DOCUMENT_TYPES: readonly DocumentType[] = ['PROFILE_PHOTO', 'GOV_ID'];
+export function isDocToggleable(type: DocumentType): boolean {
+  return !LOCKED_DOCUMENT_TYPES.includes(type);
+}
+
+export const ALL_TRACKS: readonly VehicleTrack[] = ['BIKE', 'CAR', 'KEKE', 'BICYCLE'];
+
+/**
+ * The admin-toggleable documents and, for each, the vehicle tracks it can apply to. Drives the admin
+ * per-vehicle matrix. Excludes the locked identity docs and GUARANTOR (which has its own switch).
+ * City-conditional docs (the Lagos permits) are listed against their tracks regardless of city, so the
+ * admin can pre-configure them.
+ */
+export function toggleableCatalog(): { type: DocumentType; label: string; tracks: VehicleTrack[] }[] {
+  return DOCUMENT_SPECS
+    .filter((s) => isDocToggleable(s.type) && s.type !== 'GUARANTOR')
+    .map((s) => ({ type: s.type, label: s.label, tracks: s.tracks === 'ALL' ? [...ALL_TRACKS] : [...s.tracks] }));
 }
 
 function appliesToTrack(spec: DocumentSpec, track: VehicleTrack): boolean {
@@ -64,7 +87,9 @@ function appliesToTrack(spec: DocumentSpec, track: VehicleTrack): boolean {
 
 /** The exact set of document types a rider on `track` must provide, given the city + flags. */
 export function requiredDocuments(track: VehicleTrack, ctx: CatalogContext): DocumentType[] {
+  const disabled = new Set((ctx.disabledTypes ?? []).filter(isDocToggleable)); // identity docs stay locked on
   return DOCUMENT_SPECS.filter((s) => {
+    if (disabled.has(s.type)) return false;
     if (!appliesToTrack(s, track)) return false;
     if (s.cities && !s.cities.includes(ctx.city)) return false;
     if (s.requiresFlag === 'guarantor' && !ctx.requireGuarantor) return false;

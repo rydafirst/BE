@@ -35,9 +35,13 @@ export class DocumentsService {
     private readonly settings: SettingsService,
   ) {}
 
-  private async ctx(): Promise<CatalogContext> {
+  private async ctx(track: VehicleTrack): Promise<CatalogContext> {
     const s = await this.settings.effective();
-    return { city: s.launchCity, requireGuarantor: s.requireGuarantor };
+    return {
+      city: s.launchCity,
+      requireGuarantor: s.requireGuarantor,
+      disabledTypes: (s.disabledDocByTrack[track] ?? []) as DocumentType[], // per-vehicle hidden docs
+    };
   }
 
   /** Choose (or change) the rider's vehicle track — decides which documents are required. */
@@ -70,7 +74,7 @@ export class DocumentsService {
     const track = await this.repo.getTrack(riderId);
     if (!track) return { track: null, onboarding: 'NO_TRACK', items: [] };
 
-    const required = requiredDocuments(track, await this.ctx());
+    const required = requiredDocuments(track, await this.ctx(track));
     const stateByType = await this.latestStateByType(riderId, Date.now());
     const docs = await this.repo.listByRider(riderId);
     const latestReason = new Map<DocumentType, { reason?: string; expiresAt?: number }>();
@@ -106,7 +110,7 @@ export class DocumentsService {
     if (!ALLOWED_CONTENT.has(input.contentType)) throw new BadRequestException('Unsupported file type');
     const track = await this.repo.getTrack(riderId);
     if (!track) throw new BadRequestException('Choose your vehicle type first');
-    const required = requiredDocuments(track, await this.ctx());
+    const required = requiredDocuments(track, await this.ctx(track));
     if (!required.includes(input.type)) throw new BadRequestException('This document is not required for your vehicle');
 
     const spec = specFor(input.type);
@@ -146,7 +150,7 @@ export class DocumentsService {
   private async onboardingFor(riderId: string, now: number): Promise<{ track: VehicleTrack | null; status: QueueStatus; oldestPendingAt: number }> {
     const track = await this.repo.getTrack(riderId);
     if (!track) return { track: null, status: 'NO_TRACK', oldestPendingAt: Number.MAX_SAFE_INTEGER };
-    const required = requiredDocuments(track, await this.ctx());
+    const required = requiredDocuments(track, await this.ctx(track));
     const stateByType = await this.latestStateByType(riderId, now);
     const status = documentOnboardingStatus(
       required,
