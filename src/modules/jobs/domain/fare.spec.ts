@@ -39,6 +39,28 @@ test('a ~5km delivery nets the rider ₦2,240 (distance-only: ₦700 + 7 road-km
   assert.equal(riderNet, 224_000, `riderNet=${riderNet}`);       // ₦700 + 7 road-km×₦220, no time charge
 });
 
+test('economy tier discounts the fare and the rider payout, and rows still sum', () => {
+  const express = computeFare('DELIVERY', 4000);          // no discount
+  const economy = computeFare('DELIVERY', 4000, undefined, 20); // 20% off
+  assert.equal(express.discountMinor, 0);
+  assert.ok(economy.discountMinor < 0, 'economy carries a negative discount row');
+  // 20% off the 193,200 subtotal = -38,640; net subtotal 154,560; fee 10% = 15,456; total 170,016.
+  assert.equal(economy.discountMinor, -38_640);
+  assert.equal(economy.totalMinor, 170_016);
+  assert.ok(economy.totalMinor < express.totalMinor, 'economy is cheaper for the customer');
+  // Rider nets the discounted subtotal → paid less than express.
+  const expressNet = express.baseMinor + express.distanceMinor + express.timeMinor + express.discountMinor;
+  const economyNet = economy.baseMinor + economy.distanceMinor + economy.timeMinor + economy.discountMinor;
+  assert.ok(economyNet < expressNet, 'rider is paid less on economy');
+  // Rows sum including the discount row.
+  assert.equal(economy.baseMinor + economy.distanceMinor + economy.timeMinor + economy.discountMinor + economy.platformFeeMinor, economy.totalMinor);
+});
+
+test('rejects an out-of-range discount', () => {
+  assert.throws(() => computeFare('DELIVERY', 4000, undefined, 120));
+  assert.throws(() => computeFare('DELIVERY', 4000, undefined, -5));
+});
+
 test('ride base is higher than delivery', () => {
   assert.ok(computeFare('RIDE', 0).baseMinor > computeFare('DELIVERY', 0).baseMinor);
 });

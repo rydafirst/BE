@@ -26,6 +26,34 @@ export function routeDistanceMeters(points: readonly GeoPoint[]): number {
   return total;
 }
 
+/** Initial compass bearing (degrees, 0–360) from point a to point b. */
+export function bearingDegrees(a: GeoPoint, b: GeoPoint): number {
+  const y = Math.sin(rad(b.lng - a.lng)) * Math.cos(rad(b.lat));
+  const x =
+    Math.cos(rad(a.lat)) * Math.sin(rad(b.lat)) -
+    Math.sin(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.cos(rad(b.lng - a.lng));
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+/** Smallest angular difference (0–180°) between two compass bearings. */
+export function bearingDiffDegrees(b1: number, b2: number): number {
+  const d = Math.abs(b1 - b2) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+/**
+ * True when two trips head roughly the same way — the yardstick for letting a rider stack a second
+ * economy delivery. We compare the bearing of each trip's pickup→dropoff; if they point within
+ * `maxDiffDeg` of each other, the drops are "in the same direction".
+ */
+export function sameDirection(
+  a: { pickup: GeoPoint; dropoff: GeoPoint },
+  b: { pickup: GeoPoint; dropoff: GeoPoint },
+  maxDiffDeg: number,
+): boolean {
+  return bearingDiffDegrees(bearingDegrees(a.pickup, a.dropoff), bearingDegrees(b.pickup, b.dropoff)) <= maxDiffDeg;
+}
+
 /**
  * Shortest allowed distance between pickup and drop-off. Generous enough to tolerate GPS drift, but
  * enough to reject a booking where both ends resolved to the same place (e.g. a customer tapping

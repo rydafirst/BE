@@ -78,7 +78,7 @@ function build(cap?: number) {
     { listOnline: async () => [] as string[] } as unknown as never,
     { isRiderCleared: async () => true } as unknown as never,
     {} as unknown as never,
-    { enforceRiderClearance: async () => false } as unknown as never,
+    { enforceRiderClearance: async () => false, economyDiscountPct: async () => 20 } as unknown as never,
     { hasAccount: async () => true } as unknown as never,
     { getEmail: async () => 'buyer@example.com' } as unknown as never,
     { photoUrl: async () => undefined } as unknown as never,
@@ -89,11 +89,20 @@ function build(cap?: number) {
   return { svc, repo, ledger, provider };
 }
 
-/** Book a fresh delivery and fund it so it reaches SEARCHING (acceptable). */
-async function bookAndFund(svc: JobsService): Promise<{ id: string; amountMinor: number }> {
-  const quote = svc.quote({ type: 'DELIVERY', pickup: PICKUP, dropoff: DROPOFF });
+/**
+ * Book a fresh delivery and fund it so it reaches SEARCHING (acceptable). Defaults to the ECONOMY tier
+ * because only economy deliveries may be stacked — the stacking tests depend on that. Pass a dropoff to
+ * steer the trip's direction (for the same-direction guard), or tier:'EXPRESS' for the single-drop tier.
+ */
+async function bookAndFund(
+  svc: JobsService,
+  opts?: { tier?: 'EXPRESS' | 'ECONOMY'; dropoff?: typeof DROPOFF },
+): Promise<{ id: string; amountMinor: number }> {
+  const dropoff = opts?.dropoff ?? DROPOFF;
+  const quote = await svc.quote({ type: 'DELIVERY', pickup: PICKUP, dropoff });
+  const quoteToken = opts?.tier === 'EXPRESS' ? quote.quoteToken : quote.economy!.quoteToken;
   const created = await svc.createJob(CUSTOMER, {
-    quoteToken: quote.quoteToken, recipient: { name: 'Ada', phone: '08030000000' }, item: 'Documents',
+    quoteToken, recipient: { name: 'Ada', phone: '08030000000' }, item: 'Documents',
   } as never);
   await svc.confirmFundedByTxRef({
     status: 'successful', amountMinor: created.amountMinor, currency: 'NGN', txRef: created.flwTxRef!, transactionId: `txn-${created.id}`,
@@ -146,7 +155,8 @@ test('ISOLATION: completing one job releases only that job — the other is unto
 
 test('MONEY: two stacked jobs each pay the rider fare-minus-fee; escrow fully drains, nothing refunded', async () => {
   const { svc, ledger } = build();
-  const fare = computeFare('DELIVERY', haversineMeters(PICKUP, DROPOFF));
+  // Stacked jobs are ECONOMY (only economy stacks), so price them with the same 20% discount the stub uses.
+  const fare = computeFare('DELIVERY', haversineMeters(PICKUP, DROPOFF), undefined, 20);
   const a = await bookAndFund(svc);
   const b = await bookAndFund(svc);
   await svc.accept(RIDER_ID, a.id);
@@ -182,6 +192,38 @@ test('REVERSIBLE: MAX_ACTIVE_JOBS_PER_RIDER=1 restores the old single-delivery r
   const b = await bookAndFund(svc);
   await svc.accept(RIDER_ID, a.id);
   await assert.rejects(() => svc.accept(RIDER_ID, b.id), (e: unknown) => e instanceof ConflictException);
+});
+
+test('TIER: express is single-drop — a rider holding one cannot take another', async () => {
+  const { svc } = build();
+  const a = await bookAndFund(svc, { tier: 'EXPRESS' });
+  const b = await bookAndFund(svc, { tier: 'EXPRESS' });
+  await svc.accept(RIDER_ID, a.id);
+  await assert.rejects(() => svc.accept(RIDER_ID, b.id), (e: unknown) => e instanceof ConflictException);
+});
+
+test('TIER: cannot mix — an economy drop cannot be stacked on an express one', async () => {
+  const { svc } = build();
+  const express = await bookAndFund(svc, { tier: 'EXPRESS' });
+  const economy = await bookAndFund(svc, { tier: 'ECONOMY' });
+  await svc.accept(RIDER_ID, express.id);
+  await assert.rejects(() => svc.accept(RIDER_ID, economy.id), (e: unknown) => e instanceof ConflictException);
+});
+
+test('TIER: two economy drops stack only when they head the same way', async () => {
+  const { svc } = build();
+  // Same direction (NE) — allowed.
+  const a = await bookAndFund(svc, { tier: 'ECONOMY', dropoff: { lat: 6.52, lng: 3.32 } });
+  const sameWay = await bookAndFund(svc, { tier: 'ECONOMY', dropoff: { lat: 6.53, lng: 3.33 } });
+  await svc.accept(RIDER_ID, a.id);
+  await svc.accept(RIDER_ID, sameWay.id); // ok — same bearing
+
+  // Opposite direction (SW) — refused.
+  const { svc: svc2 } = build();
+  const c = await bookAndFund(svc2, { tier: 'ECONOMY', dropoff: { lat: 6.52, lng: 3.32 } });
+  const otherWay = await bookAndFund(svc2, { tier: 'ECONOMY', dropoff: { lat: 6.48, lng: 3.28 } });
+  await svc2.accept(RIDER_ID, c.id);
+  await assert.rejects(() => svc2.accept(RIDER_ID, otherWay.id), (e: unknown) => e instanceof ConflictException);
 });
 
 test('ADMIN ASSIGN: can hand a job to a rider already at the cap (manual override)', async () => {

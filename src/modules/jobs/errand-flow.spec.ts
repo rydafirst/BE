@@ -66,7 +66,7 @@ function build() {
     { getPayout: async () => RIDER } as unknown as never, { hit: async () => true } as unknown as never, escrow,
     { record: async () => {}, announceToRiders: async () => {} } as unknown as never,
     { listOnline: async () => [] } as unknown as never, { isRiderCleared: async () => true } as unknown as never,
-    {} as unknown as never, { enforceRiderClearance: async () => false } as unknown as never,
+    {} as unknown as never, { enforceRiderClearance: async () => false, economyDiscountPct: async () => 20 } as unknown as never,
     { hasAccount: async () => true } as unknown as never, { getEmail: async () => 'buyer@example.com' } as unknown as never,
     { photoUrl: async () => undefined } as unknown as never, { numberFor: async () => ({}) } as unknown as never,
     { append: async () => {}, list: async () => [], stalledSince: async () => [] } as unknown as never,
@@ -76,7 +76,7 @@ function build() {
 }
 
 async function bookErrand(svc: JobsService, customer: string, goodsMinor: number) {
-  const quote = svc.quote({ type: 'ERRAND', pickup: PICKUP, dropoff: DROPOFF });
+  const quote = await svc.quote({ type: 'ERRAND', pickup: PICKUP, dropoff: DROPOFF });
   const created = await svc.createErrand(customer, { quoteToken: quote.quoteToken, goodsMinor, shoppingList: 'Bread and milk', storeName: 'Sola Store' } as never);
   await svc.confirmFundedByTxRef({ status: 'successful', amountMinor: created.amountMinor, currency: 'NGN', txRef: created.flwTxRef!, transactionId: `txn-${customer}` });
   return created;
@@ -205,7 +205,7 @@ test('TOP-UP: extra money grows the goods (paid to the vendor); the rider fee ne
 });
 
 async function bookErrandWithAccount(svc: JobsService, customer: string) {
-  const quote = svc.quote({ type: 'ERRAND', pickup: PICKUP, dropoff: DROPOFF });
+  const quote = await svc.quote({ type: 'ERRAND', pickup: PICKUP, dropoff: DROPOFF });
   const created = await svc.createErrand(customer, {
     quoteToken: quote.quoteToken, goodsMinor: GOODS, shoppingList: 'Bread and milk', storeName: 'Sola Store',
     bankCode: VENDOR.bankCode, accountNumber: VENDOR.accountNumber,

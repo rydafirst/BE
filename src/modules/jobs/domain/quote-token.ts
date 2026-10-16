@@ -3,6 +3,9 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 /** A quote is signed server-side and short-lived so the client cannot tamper with the price. */
 export interface QuotePayload {
   type: 'DELIVERY' | 'RIDE' | 'ERRAND';
+  // Speed tier. Omitted for EXPRESS so an express token is byte-identical to before this field existed;
+  // present as 'ECONOMY' only for the discounted tier.
+  tier?: 'EXPRESS' | 'ECONOMY';
   amountMinor: number; // kobo
   currency: 'NGN';
   pickup: { lat: number; lng: number };

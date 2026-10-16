@@ -5,6 +5,11 @@ import { etaMinutes, roadMeters } from './eta.js';
 // money the customer types is separate and routed to the vendor, not part of the fare.
 export type JobType = 'DELIVERY' | 'RIDE' | 'ERRAND';
 
+// Delivery speed tier. EXPRESS = full price, delivered direct & fast (and dispatched to riders first).
+// ECONOMY = cheaper for the customer (and a lower rider payout), but batchable — the "I don't mind
+// waiting" option. Only ECONOMY orders may be stacked by a rider.
+export type JobTier = 'EXPRESS' | 'ECONOMY';
+
 /**
  * Upfront pricing config (kobo). Pricing is DISTANCE-ONLY: base + per-km, with a minimum-fare floor so
  * short trips still pay. `platformFeePct` is added on top and kept by the platform; the rider receives
@@ -33,6 +38,7 @@ export interface FareBreakdown {
   baseMinor: number;
   distanceMinor: number;
   timeMinor: number;
+  discountMinor: number;    // <= 0; the economy-tier saving (0 for express)
   platformFeeMinor: number;
   totalMinor: number;
 }
@@ -50,12 +56,16 @@ export function computeFare(
   type: JobType,
   distanceMeters: number,
   durationMinutes: number = etaMinutes(distanceMeters),
+  discountPct = 0,
 ): FareBreakdown {
   if (!Number.isFinite(distanceMeters) || distanceMeters < 0) {
     throw new Error('distanceMeters must be a non-negative number');
   }
   if (!Number.isFinite(durationMinutes) || durationMinutes < 0) {
     throw new Error('durationMinutes must be a non-negative number');
+  }
+  if (!Number.isFinite(discountPct) || discountPct < 0 || discountPct >= 100) {
+    throw new Error('discountPct must be between 0 and 100');
   }
   const base = FARE_CONFIG.baseMinor[type];
   // Bill distance on the estimated ROAD distance (not the crow-flies input), matching what the rider
@@ -67,14 +77,20 @@ export function computeFare(
   const subtotal = Math.max(rawSubtotal, FARE_CONFIG.minimumMinor[type]);
   // Any minimum-fare top-up rides on the base line, so base+distance+time === subtotal (rows sum).
   const baseWithFloor = base + (subtotal - rawSubtotal);
-  const platformFee = Math.round((subtotal * FARE_CONFIG.platformFeePct) / 100);
+  // ECONOMY tier: knock discountPct off the rider subtotal; the platform fee is then taken on the
+  // DISCOUNTED subtotal, so the customer pays less AND the rider is paid proportionally less. Rows sum:
+  // base+distance+time+discount = net subtotal; + fee = total.
+  const discount = discountPct > 0 ? -Math.round((subtotal * discountPct) / 100) : 0;
+  const netSubtotal = subtotal + discount;
+  const platformFee = Math.round((netSubtotal * FARE_CONFIG.platformFeePct) / 100);
 
   return {
     baseMinor: baseWithFloor,
     distanceMinor: distance,
     timeMinor: time,
+    discountMinor: discount,
     platformFeeMinor: platformFee,
-    totalMinor: subtotal + platformFee,
+    totalMinor: netSubtotal + platformFee,
   };
 }
 

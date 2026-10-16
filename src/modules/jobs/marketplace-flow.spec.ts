@@ -80,7 +80,7 @@ function build() {
     { getPayout: async () => RIDER } as unknown as never, { hit: async () => true } as unknown as never, escrow,
     { record: async () => {}, announceToRiders: async () => {} } as unknown as never,
     { listOnline: async () => [] } as unknown as never, { isRiderCleared: async () => true } as unknown as never,
-    {} as unknown as never, { enforceRiderClearance: async () => false } as unknown as never,
+    {} as unknown as never, { enforceRiderClearance: async () => false, economyDiscountPct: async () => 20 } as unknown as never,
     { hasAccount: async () => true } as unknown as never, { getEmail: async () => 'buyer@example.com' } as unknown as never,
     { photoUrl: async () => undefined } as unknown as never, { numberFor: async () => ({}) } as unknown as never,
     { append: async () => {}, list: async () => [], stalledSince: async () => [] } as unknown as never,
@@ -95,7 +95,7 @@ test('MARKETPLACE: catalog-priced order pays the vendor automatically on deliver
   const fare = computeFare('ERRAND', routeDistanceMeters([SHOP, DROPOFF]));
   const GOODS = PRODUCTS.p1!.priceMinor * 2 + PRODUCTS.p2!.priceMinor; // 2× Jollof + 1× Drink = 580000
 
-  const quote = svc.quote({ type: 'ERRAND', pickup: SHOP, dropoff: DROPOFF });
+  const quote = await svc.quote({ type: 'ERRAND', pickup: SHOP, dropoff: DROPOFF });
   const created = await svc.createMarketplaceOrder('cust-m1', {
     vendorId: VENDOR.id, quoteToken: quote.quoteToken,
     items: [{ productId: 'p1', quantity: 2 }, { productId: 'p2', quantity: 1 }],
@@ -128,7 +128,7 @@ test('MARKETPLACE: catalog-priced order pays the vendor automatically on deliver
 
 test('MARKETPLACE: prices are server-authoritative — a foreign product id is rejected', async () => {
   const { svc } = build();
-  const quote = svc.quote({ type: 'ERRAND', pickup: SHOP, dropoff: DROPOFF });
+  const quote = await svc.quote({ type: 'ERRAND', pickup: SHOP, dropoff: DROPOFF });
   await assert.rejects(svc.createMarketplaceOrder('cust-m2', {
     vendorId: VENDOR.id, quoteToken: quote.quoteToken, items: [{ productId: 'not-a-product', quantity: 1 }],
   }), 'unknown product is rejected');

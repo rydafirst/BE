@@ -21,7 +21,7 @@ export class PrismaJobRepository implements JobRepository {
     // (platformFeeMinor, payout*) that the generated client only knows after `prisma generate`,
     // which runs on deploy but is blocked in this sandbox. Runtime values are correct.
     const data = {
-      id: job.id, type: job.type, status: job.status, customerId: job.customerId,
+      id: job.id, type: job.type, tier: job.tier ?? 'EXPRESS', status: job.status, customerId: job.customerId,
       amountMinor: job.amountMinor, currency: job.currency, refundAccountId: job.refundAccountId,
       platformFeeMinor: job.platformFeeMinor ?? null,
       pickupLat: job.pickup.lat, pickupLng: job.pickup.lng,
@@ -53,6 +53,7 @@ export class PrismaJobRepository implements JobRepository {
     if (!r) return null;
     // New columns (migration 20260714000000) read via a cast until the client is regenerated.
     const x = r as typeof r & {
+      tier: string | null;
       platformFeeMinor: number | null; payoutPending: boolean | null;
       payoutError: string | null; payoutRef: string | null;
       waitStartedAt: Date | null; returnOfJobId: string | null;
@@ -64,6 +65,7 @@ export class PrismaJobRepository implements JobRepository {
     };
     return {
       id: r.id, type: r.type, status: r.status as JobStatus, customerId: r.customerId,
+      ...((x.tier ?? 'EXPRESS') === 'ECONOMY' ? { tier: 'ECONOMY' as const } : {}),
       ...(x.customerName ? { customerName: x.customerName } : {}),
       ...(r.riderId ? { riderId: r.riderId } : {}),
       amountMinor: r.amountMinor, currency: 'NGN', refundAccountId: r.refundAccountId,

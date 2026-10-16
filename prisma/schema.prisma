@@ -177,6 +177,7 @@ model IdentityBlocklist {
 model Job {
   id              String    @id @default(uuid())
   type            JobType
+  tier            String    @default("EXPRESS") // EXPRESS (fast, full price) | ECONOMY (cheaper, batchable)
   status          JobStatus @default(CREATED)
   customerId      String
   riderId         String?

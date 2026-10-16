@@ -12,7 +12,7 @@ import { EscrowService, type SettleResult } from '../payments/escrow.service.js'
 import type { VerifiedTxn } from '../payments/payment-provider.interface.js';
 import { assertTransition, canTransition, isDeliveryComplete, isRiderEngaged, type JobStatus } from './domain/job-state-machine.js';
 import { computeFare, type FareBreakdown } from './domain/fare.js';
-import { haversineMeters, isTripTooShort, MIN_TRIP_METERS, routeDistanceMeters, type GeoPoint } from './domain/geo.js';
+import { haversineMeters, isTripTooShort, MIN_TRIP_METERS, routeDistanceMeters, sameDirection, type GeoPoint } from './domain/geo.js';
 import {
   allExtraStopsDelivered, hasExtraStops, MAX_EXTRA_STOPS, nextPendingStopIndex,
   redactExtraStopsForViewer, type ExtraStop,
@@ -195,7 +195,7 @@ export class JobsService {
     } catch { /* best-effort */ }
   }
 
-  quote(dto: QuoteRequestDto): { quoteToken: string; amountMinor: number; currency: 'NGN'; breakdown: FareBreakdown } {
+  async quote(dto: QuoteRequestDto): Promise<{ quoteToken: string; amountMinor: number; currency: 'NGN'; breakdown: FareBreakdown; economy?: { quoteToken: string; amountMinor: number; discountMinor: number } }> {
     // Reject a pickup and drop-off at the same spot (e.g. both set via "use my location"). Otherwise
     // the trip prices as zero distance and both "navigate" buttons open the same point — the source of
     // the "drop-off goes to pickup" confusion. Enforced server-side so the client can't bypass it.
@@ -215,18 +215,30 @@ export class JobsService {
     }
     // Price the FULL multi-leg route, never a single leg — a 3-drop job costs the whole path.
     const distance = routeDistanceMeters(routePoints);
+    const exp = Date.now() + QUOTE_TTL_MS;
+    const common = {
+      type: dto.type, currency: 'NGN' as const, pickup: dto.pickup, dropoff: dto.dropoff,
+      // Omit `stops` entirely for a single-stop quote so its signed bytes are unchanged.
+      ...(stops.length > 0 ? { stops } : {}),
+      exp,
+    };
+
+    // EXPRESS (default, full price). tier is omitted from the token so an express quote is unchanged.
     const breakdown = computeFare(dto.type, distance);
-    const quoteToken = signQuote(
-      {
-        type: dto.type, amountMinor: breakdown.totalMinor, currency: 'NGN',
-        pickup: dto.pickup, dropoff: dto.dropoff,
-        // Omit `stops` entirely for a single-stop quote so its signed bytes are unchanged.
-        ...(stops.length > 0 ? { stops } : {}),
-        exp: Date.now() + QUOTE_TTL_MS,
-      },
-      this.env.JOBS_QUOTE_SECRET,
-    );
-    return { quoteToken, amountMinor: breakdown.totalMinor, currency: 'NGN', breakdown };
+    const quoteToken = signQuote({ ...common, amountMinor: breakdown.totalMinor }, this.env.JOBS_QUOTE_SECRET);
+
+    // ECONOMY (cheaper, batchable) — offered for point-to-point trips only (not errands, whose price
+    // also carries goods money). Priced with the admin economy discount and signed as a distinct token
+    // tagged tier:'ECONOMY', so the customer picks a tier and we can't be tricked into the wrong price.
+    let economy: { quoteToken: string; amountMinor: number; discountMinor: number } | undefined;
+    const discountPct = await this.settings.economyDiscountPct();
+    if (dto.type !== 'ERRAND' && discountPct > 0) {
+      const ecoBreakdown = computeFare(dto.type, distance, undefined, discountPct);
+      const ecoToken = signQuote({ ...common, tier: 'ECONOMY', amountMinor: ecoBreakdown.totalMinor }, this.env.JOBS_QUOTE_SECRET);
+      economy = { quoteToken: ecoToken, amountMinor: ecoBreakdown.totalMinor, discountMinor: ecoBreakdown.discountMinor };
+    }
+
+    return { quoteToken, amountMinor: breakdown.totalMinor, currency: 'NGN', breakdown, ...(economy ? { economy } : {}) };
   }
 
   /** Create a job and start collection; returns the job + hosted-checkout link. */
@@ -242,7 +254,11 @@ export class JobsService {
     // append/move a stop after quoting to under-pay. For a single-stop quote (no signed stops) this is
     // exactly `haversineMeters(pickup, dropoff)` — the single-stop fare is unchanged.
     const signedStops = v.payload.stops ?? [];
-    const fare = computeFare(v.payload.type, routeDistanceMeters([v.payload.pickup, v.payload.dropoff, ...signedStops]));
+    // Re-price with the SIGNED tier's discount (economy = admin %). If the admin changed the % since the
+    // quote, the recompute won't match the signed total → ask for a fresh price rather than mis-charge.
+    const tier = v.payload.tier ?? 'EXPRESS';
+    const discountPct = tier === 'ECONOMY' ? await this.settings.economyDiscountPct() : 0;
+    const fare = computeFare(v.payload.type, routeDistanceMeters([v.payload.pickup, v.payload.dropoff, ...signedStops]), undefined, discountPct);
     if (fare.totalMinor !== v.payload.amountMinor) {
       throw new BadRequestException('Quote no longer valid — please refresh your price');
     }
@@ -303,6 +319,8 @@ export class JobsService {
 
     const job: Job = {
       id: randomUUID(), type: v.payload.type, status: 'CREATED', customerId,
+      ...(tier === 'ECONOMY' ? { tier } : {}), // EXPRESS is the default; store only ECONOMY explicitly
+
       ...(dto.customerName ? { customerName: dto.customerName } : {}),
       // Refunds default to the original payment source; 'source' is the sentinel for that.
       amountMinor: chargeMinor, platformFeeMinor: fare.platformFeeMinor,
@@ -788,14 +806,32 @@ export class JobsService {
     // Checked before the claim. (A rider double-tapping two offers in the same instant could momentarily
     // exceed the cap by one — not money-unsafe since every job is isolated; surfaced in admin ops.)
     const cap = this.env.MAX_ACTIVE_JOBS_PER_RIDER ?? 2;
+    const candidate = await this.mustFind(jobId);
+    const candidateTier = candidate.tier ?? 'EXPRESS';
     const mine = await this.jobs.listByRider(riderId);
-    const activeCount = mine.filter((j) => isRiderEngaged(j.status)).length;
-    if (activeCount >= cap) {
-      throw new ConflictException(
-        cap === 1
-          ? 'Finish or release your current delivery before accepting another'
-          : `You already have ${activeCount} active deliveries (max ${cap}). Finish or release one before accepting another.`,
-      );
+    const active = mine.filter((j) => isRiderEngaged(j.status));
+
+    // Stacking rule: ONLY economy (low-pay) deliveries may be held two at a time, and only when they
+    // head the same way. Express is always single-drop (it's the "fast" tier — no detours).
+    if (candidateTier === 'EXPRESS') {
+      if (active.length >= 1) {
+        throw new ConflictException('Express deliveries are single-drop — finish or release your current delivery first.');
+      }
+    } else {
+      if (active.length >= cap) {
+        throw new ConflictException(
+          cap === 1
+            ? 'Finish or release your current delivery before accepting another'
+            : `You already have ${active.length} active deliveries (max ${cap}). Finish or release one before accepting another.`,
+        );
+      }
+      if (active.some((j) => (j.tier ?? 'EXPRESS') !== 'ECONOMY')) {
+        throw new ConflictException('You can only stack economy (low-pay) deliveries — your current delivery is express.');
+      }
+      const maxDeg = this.env.ECONOMY_SAME_DIRECTION_DEG ?? 45;
+      if (active.some((j) => !sameDirection(candidate, j, maxDeg))) {
+        throw new ConflictException('This delivery isn’t going the same direction as your current one.');
+      }
     }
     const claimed = await this.jobs.claim(jobId, riderId);
     if (!claimed) throw new ConflictException('Job is no longer available');

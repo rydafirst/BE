@@ -89,7 +89,7 @@ function build() {
   const presence = { listOnline: async () => [] as string[] };
   const documents = { isRiderCleared: async () => true };
   const ratings = {};
-  const settings = { enforceRiderClearance: async () => false };
+  const settings = { enforceRiderClearance: async () => false, economyDiscountPct: async () => 20 };
   const riderAccount = { hasAccount: async () => true };
   const customerEmail = { getEmail: async () => 'buyer@example.com' };
   const customerPhoto = { photoUrl: async () => undefined };
@@ -112,7 +112,7 @@ function build() {
 
 /** Book + fund a 2-extra-stop (3-drop) delivery for a fresh customer, returning the created job. */
 async function bookMultiStop(svc: JobsService, customer: string) {
-  const quote = svc.quote({ type: 'DELIVERY', pickup: PICKUP, dropoff: DROPOFF, stops: [STOP_A, STOP_B] });
+  const quote = await svc.quote({ type: 'DELIVERY', pickup: PICKUP, dropoff: DROPOFF, stops: [STOP_A, STOP_B] });
   const created = await svc.createJob(customer, {
     quoteToken: quote.quoteToken,
     recipient: { name: 'Ada', phone: '08030000001' },
@@ -283,7 +283,7 @@ test('CODE REVEAL: only the booking customer may reveal a stop code', async () =
 test('MONEY (regression): a single-stop job is UNCHANGED — the one code releases immediately', async () => {
   const { svc, repo, ledger, provider } = build();
   const fare = computeFare('DELIVERY', haversineMeters(PICKUP, DROPOFF));
-  const quote = svc.quote({ type: 'DELIVERY', pickup: PICKUP, dropoff: DROPOFF }); // no stops
+  const quote = await svc.quote({ type: 'DELIVERY', pickup: PICKUP, dropoff: DROPOFF }); // no stops
   const created = await svc.createJob('cust-single', {
     quoteToken: quote.quoteToken, recipient: { name: 'Ada', phone: '08030000000' }, item: 'Docs',
   } as never);

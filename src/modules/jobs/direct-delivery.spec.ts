@@ -83,7 +83,7 @@ function build(mode: 'direct' | 'fallback') {
   const presence = { listOnline: async () => [] as string[] };
   const documents = { isRiderCleared: async () => true };
   const ratings = {};
-  const settings = { enforceRiderClearance: async () => false };
+  const settings = { enforceRiderClearance: async () => false, economyDiscountPct: async () => 20 };
   const riderAccount = { hasAccount: async () => true };
   const customerEmail = { getEmail: async () => 'buyer@example.com' };
   const customerPhoto = { photoUrl: async () => undefined };
@@ -116,7 +116,7 @@ function build(mode: 'direct' | 'fallback') {
 
 /** Drive book -> fund -> accept -> pickup -> deliver, returning the created job + services. */
 async function bookAndFund(svc: JobsService) {
-  const quote = svc.quote({ type: 'DELIVERY', pickup: PICKUP, dropoff: DROPOFF });
+  const quote = await svc.quote({ type: 'DELIVERY', pickup: PICKUP, dropoff: DROPOFF });
   // Direct mode: NO fallbackPolicy is sent — a plain booking must be accepted.
   const created = await svc.createJob(CUSTOMER, {
     quoteToken: quote.quoteToken,
@@ -190,7 +190,7 @@ test('DIRECT is fail-closed: fallback-only endpoints return 409, opening no mone
 test('REVERSIBLE: DELIVERY_MODE=fallback restores the 75% return-deposit pre-charge', async () => {
   const { svc } = build('fallback');
   const fare = computeFare('DELIVERY', haversineMeters(PICKUP, DROPOFF));
-  const quote = svc.quote({ type: 'DELIVERY', pickup: PICKUP, dropoff: DROPOFF });
+  const quote = await svc.quote({ type: 'DELIVERY', pickup: PICKUP, dropoff: DROPOFF });
   const created = await svc.createJob(CUSTOMER, {
     quoteToken: quote.quoteToken,
     recipient: { name: 'Ada', phone: '08030000000' },

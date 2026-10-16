@@ -9,6 +9,7 @@ import { JOB_REPO, type Job, type JobRepository } from './ports.js';
  *  pre-accept (no exact coordinates, no recipient/customer/refund data). */
 export type AvailableJob = Pick<Job, 'id' | 'type' | 'amountMinor' | 'currency' | 'createdAt'>
   & {
+    tier: 'EXPRESS' | 'ECONOMY';  // rider feed tags these HIGH-PAY (express) / LOW-PAY (economy)
     pickupArea: string; dropoffArea: string; pickupApprox: { lat: number; lng: number };
     tripDistanceMeters: number; tripEtaMin: number;      // pickup -> dropoff
     toPickupMeters?: number; toPickupEtaMin?: number;    // rider -> pickup (only when location is known)
@@ -55,7 +56,7 @@ export class JobDiscoveryService {
         ? (j.errand.deliveryFeeMinor ?? Math.max(0, j.amountMinor - j.errand.goodsMinor))
         : j.amountMinor;
       return {
-        id: j.id, type: j.type, amountMinor: j.amountMinor, currency: j.currency, createdAt: j.createdAt,
+        id: j.id, type: j.type, tier: (j.tier ?? 'EXPRESS'), amountMinor: j.amountMinor, currency: j.currency, createdAt: j.createdAt,
         riderPayoutMinor: Math.max(0, grossFareMinor - (j.platformFeeMinor ?? 0)),
         pickupArea: j.pickupArea || coarseArea(j.pickupAddress),
         dropoffArea: j.dropoffArea || coarseArea(j.dropoffAddress),
@@ -66,9 +67,12 @@ export class JobDiscoveryService {
         ...((j.extraStops?.length ?? 0) > 0 ? { stopCount: (j.extraStops?.length ?? 0) + 1 } : {}),
       };
     });
-    // Every rider sees every job — proximity only orders the board. With a location we sort
-    // NEAREST-first (and each card shows its km + ETA); without one we fall back to newest-first.
-    if (riderPos) return mapped.sort((a, b) => (a.toPickupMeters! - b.toPickupMeters!));
-    return mapped.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    // EXPRESS is always shown FIRST (express = fast, so riders get offered it before economy); within a
+    // tier, proximity orders the board (nearest-first with a location, else newest-first).
+    const tierRank = (t: 'EXPRESS' | 'ECONOMY') => (t === 'ECONOMY' ? 1 : 0);
+    const within = riderPos
+      ? (a: AvailableJob, b: AvailableJob) => a.toPickupMeters! - b.toPickupMeters!
+      : (a: AvailableJob, b: AvailableJob) => b.createdAt.localeCompare(a.createdAt);
+    return mapped.sort((a, b) => tierRank(a.tier) - tierRank(b.tier) || within(a, b));
   }
 }

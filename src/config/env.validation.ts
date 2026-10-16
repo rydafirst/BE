@@ -97,6 +97,10 @@ export const envSchema = z.object({
   // fully independent — this only relaxes the accept guard. Keep small (2–3) to avoid offer hoarding.
   MAX_ACTIVE_JOBS_PER_RIDER: z.coerce.number().int().positive().default(2),
 
+  // Stacking a second ECONOMY delivery is only allowed when the two trips head roughly the same way:
+  // the max difference (degrees) between their pickup→dropoff bearings. 45° ≈ "same general direction".
+  ECONOMY_SAME_DIRECTION_DEG: z.coerce.number().int().min(0).max(180).default(45),
+
   // Rider referral reward (minor units / kobo) paid to the referrer after a referred rider completes
   // their first delivery and an admin credits it. Default ₦1,000. Overridable at runtime from admin
   // settings (referralRewardMinor).
@@ -104,6 +108,8 @@ export const envSchema = z.object({
   // Master switch for the whole referral program. When off, the code box is hidden at sign-up, new
   // claims are refused, and the Invite & earn card is hidden. Overridable from admin settings.
   REFERRALS_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  // Economy (low-pay) delivery tier discount, % off the express fare. Default 20%. Admin-adjustable.
+  ECONOMY_DISCOUNT_PCT: z.coerce.number().int().min(0).max(90).default(20),
 
   // #0 DIRECT DELIVERY: the single switch for the delivery model — flip it, don't hunt code.
   //   'direct'   (default, launch behaviour) — a plain point-to-point trip: book -> pay (escrow) ->

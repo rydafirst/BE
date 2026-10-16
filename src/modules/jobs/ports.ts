@@ -1,5 +1,5 @@
 import type { JobStatus } from './domain/job-state-machine.js';
-import type { JobType } from './domain/fare.js';
+import type { JobType, JobTier } from './domain/fare.js';
 import type { GeoPoint } from './domain/geo.js';
 import type { ExtraStop } from './domain/multi-stop.js';
 import type { ErrandDetails } from './domain/errand.js';
@@ -7,6 +7,7 @@ import type { ErrandDetails } from './domain/errand.js';
 export interface Job {
   id: string;
   type: JobType;
+  tier?: JobTier;              // EXPRESS (default) or ECONOMY (cheaper, batchable). Absent = EXPRESS.
   status: JobStatus;
   customerId: string;
   customerName?: string;       // sender's name, shown to the assigned rider
