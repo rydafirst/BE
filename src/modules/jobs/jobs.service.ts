@@ -23,6 +23,7 @@ import { checkCode, generateCode, type CodeRecord } from '../confirmations/domai
 import { HmacHasher } from '../../common/security/hmac-hasher.js';
 import { signQuote, verifyQuote } from './domain/quote-token.js';
 import { cancellationPolicy } from './domain/cancellation.js';
+import { recentPlacesFrom, type RecentPlace } from './domain/recent-places.js';
 import { canReleaseJob, MAX_RIDER_RELEASES_PER_DAY, RELEASE_WINDOW_SECONDS } from './domain/rider-release.js';
 import { failedAttemptFee } from './domain/failed-attempt-fee.js';
 import { accruedWaitingMinor, computeReturnFareMinor, graceElapsed } from './domain/resolution.js';
@@ -1437,6 +1438,12 @@ export class JobsService {
     // Customer view: their own recipient contacts stay, but never expose the internal per-stop hashes.
     for (const j of jobs) out.push(redactExtraStopsForViewer(await this.expireIfStale(j), false));
     return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** Uber-style recent places: the customer's last-used drop-offs/pickups, shown the moment they tap an
+   *  address field (before typing). Derived from their own bookings — no separate store. */
+  async recentPlaces(customerId: string): Promise<RecentPlace[]> {
+    return recentPlacesFrom(await this.jobs.listByCustomer(customerId));
   }
 
   /** Auto-cancel an unpaid order once the payment window elapses. No funds captured => safe.

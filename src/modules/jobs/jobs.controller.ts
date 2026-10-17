@@ -139,6 +139,13 @@ export class JobsController {
     return this.ratings.pendingRatings(user.id);
   }
 
+  // Uber-style recent places — the customer's last-used addresses, shown before they type. Before :id.
+  @Get('recent-places')
+  @RequirePermission('job:read:own')
+  recentPlaces(@CurrentUser() user: AuthUser) {
+    return this.jobs.recentPlaces(user.id);
+  }
+
   // ---- Rider: discovery feed (declared before :id so "available" isn't read as an id) ----
   // POST (not GET) so the rider's location rides in the request BODY, never in a URL/query string
   // that could be captured in access logs. Body is optional; without it the board is newest-first.
