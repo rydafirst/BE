@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { MARKETPLACE_VENDOR_SOURCE, type MarketplaceVendorSource } from './marketplace.port.js';
 import { ReliabilityService } from '../reliability/reliability.service.js';
+import { RiderPoolNotifier } from './rider-pool.notifier.js';
 import { randomUUID } from 'node:crypto';
 import { ENV } from '../../config/config.module.js';
 import type { Env } from '../../config/env.validation.js';
@@ -100,6 +101,9 @@ export class JobsService {
     // Rider reliability (lateness strikes/suspension + report handling). Optional so positional test
     // constructions keep working; when present it gates accept() on suspension and handles late reports.
     @Optional() private readonly reliability?: ReliabilityService,
+    // Real-time rider-pool notifier. Optional so positional test constructions keep working; when present
+    // the gateway pushes "job added/removed from the pool" to online riders instantly.
+    @Optional() private readonly pool?: RiderPoolNotifier,
   ) {}
 
   /**
@@ -835,6 +839,7 @@ export class JobsService {
     }
     const claimed = await this.jobs.claim(jobId, riderId);
     if (!claimed) throw new ConflictException('Job is no longer available');
+    this.pool?.removed(jobId); // tell every other online rider it's gone, instantly
     const job = await this.mustFind(jobId);
     await this.notify.record(job.customerId, { title: 'Rider assigned', body: 'A rider accepted your delivery and is on the way to pickup.', jobId, urgent: true });
     return job;
@@ -1527,6 +1532,7 @@ export class JobsService {
     if (this.reliability) await this.reliability.assertNotSuspended(riderId);
     const claimed = await this.jobs.claim(jobId, riderId);
     if (!claimed) throw new ConflictException('Job is no longer available — it may have just been taken.');
+    this.pool?.removed(jobId);
     const assigned = await this.mustFind(jobId);
     await this.notify.record(assigned.customerId, { title: 'Rider assigned', body: 'A rider was assigned to your delivery and is on the way to pickup.', jobId, urgent: true });
     await this.notify.record(riderId, { title: 'New delivery assigned', body: 'Support assigned a delivery to you. Open the app to start it.', jobId, urgent: true });
@@ -1710,11 +1716,18 @@ export class JobsService {
    * over. A missing event degrades a duration, it does not corrupt the job.
    */
   private async transitionTo(jobId: string, status: JobStatus): Promise<void> {
+    // Capture the prior status only when a real-time notifier is wired (prod), so we can tell whether
+    // this transition puts the job INTO the rider pool (SEARCHING) or takes it OUT of it.
+    const prev = this.pool ? (await this.jobs.find(jobId))?.status : undefined;
     await this.jobs.updateStatus(jobId, status);
     try {
       await this.statusLog.append(jobId, status, Date.now());
     } catch (e) {
       this.log.warn(`Status history not recorded for ${jobId} -> ${status}: ${(e as Error).message}`);
+    }
+    if (this.pool) {
+      if (status === 'SEARCHING') this.pool.added(jobId);
+      else if (prev === 'SEARCHING') this.pool.removed(jobId); // cancelled, voided, or otherwise left the pool
     }
   }
 

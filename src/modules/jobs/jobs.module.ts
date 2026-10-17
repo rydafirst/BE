@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PaymentsModule } from '../payments/payments.module.js';
 import { JobsController } from './jobs.controller.js';
 import { JobsService } from './jobs.service.js';
+import { RiderPoolNotifier } from './rider-pool.notifier.js';
 import { JOB_REPO } from './ports.js';
 import { InMemoryJobRepo } from './adapters/in-memory-job.repo.js';
 import { RIDER_PAYOUT } from './rider-payout.port.js';
@@ -47,6 +48,7 @@ const usePg = process.env.DB_DRIVER === 'postgres';
   controllers: [JobsController, WebhooksController, CallsController, VoiceWebhookController],
   providers: [
     JobsService,
+    RiderPoolNotifier,
     // #4 MULTI-STOP: peppered hashing for per-stop confirmation codes (JobsService dependency).
     HmacHasher,
     // Masked in-app calling (Africa's Talking). Registered here so it shares this module's single
@@ -69,6 +71,6 @@ const usePg = process.env.DB_DRIVER === 'postgres';
     // Marketplace checkout reads the vendor catalog through this port (bound to VendorsService).
     { provide: MARKETPLACE_VENDOR_SOURCE, useExisting: VendorsService },
   ],
-  exports: [JobsService],
+  exports: [JobsService, RiderPoolNotifier],
 })
 export class JobsModule {}

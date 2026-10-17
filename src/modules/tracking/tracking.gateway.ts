@@ -1,9 +1,14 @@
+import { OnModuleInit } from '@nestjs/common';
 import {
   ConnectedSocket, MessageBody, SubscribeMessage, WebSocketGateway, WebSocketServer,
 } from '@nestjs/websockets';
 import type { Server, Socket } from 'socket.io';
 import { JobsService } from '../jobs/jobs.service.js';
+import { RiderPoolNotifier } from '../jobs/rider-pool.notifier.js';
 import { TrackingService } from './tracking.service.js';
+
+/** Room every online rider joins to receive live job-pool add/remove events. */
+const POOL_ROOM = 'riders:pool';
 
 /**
  * Real-time tracking. Rooms are per-job; only the job's participants may join.
@@ -11,13 +16,36 @@ import { TrackingService } from './tracking.service.js';
  * Here userId is taken from the payload and authorized against the job (participant check).
  */
 @WebSocketGateway({ cors: { origin: (process.env.CORS_ORIGINS ?? '').split(',') } })
-export class TrackingGateway {
+export class TrackingGateway implements OnModuleInit {
   @WebSocketServer() server!: Server;
 
   constructor(
     private readonly jobs: JobsService,
     private readonly tracking: TrackingService,
+    private readonly pool: RiderPoolNotifier,
   ) {}
+
+  /** Bridge pool changes to the socket: when a job enters/leaves the SEARCHING pool, push it to every
+   *  online rider instantly (via the Redis adapter this spans all instances). */
+  onModuleInit(): void {
+    this.pool.onChange((e) => {
+      try { this.server?.to(POOL_ROOM).emit('pool', e); } catch { /* server not ready / no listeners */ }
+    });
+  }
+
+  /** An online rider joins the pool room to receive live add/remove events for the job board. */
+  @SubscribeMessage('joinPool')
+  joinPool(@ConnectedSocket() client: Socket): { ok: boolean } {
+    void client.join(POOL_ROOM);
+    return { ok: true };
+  }
+
+  /** Leave the pool room (rider went offline / closed the board). */
+  @SubscribeMessage('leavePool')
+  leavePool(@ConnectedSocket() client: Socket): { ok: boolean } {
+    void client.leave(POOL_ROOM);
+    return { ok: true };
+  }
 
   /** Customer or rider subscribes to a job's live channel. */
   @SubscribeMessage('subscribe')
